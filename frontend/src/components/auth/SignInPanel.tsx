@@ -36,6 +36,10 @@ interface SignInPanelProps {
   onSessionChange: (session: StoredSession | null) => void;
   onIdentityChange: (identity: AuthSession | null) => void;
   onClose: () => void;
+  /** 'page' is the full-screen gate shown before the workspace loads. */
+  variant?: 'modal' | 'page';
+  /** Gate only: proceed without an account. */
+  onContinueAsGuest?: () => void;
 }
 
 export function SignInPanel({
@@ -45,7 +49,10 @@ export function SignInPanel({
   onSessionChange,
   onIdentityChange,
   onClose,
+  variant = 'modal',
+  onContinueAsGuest,
 }: SignInPanelProps) {
+  const isGate = variant === 'page';
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
@@ -60,12 +67,13 @@ export function SignInPanel({
   }, [identity]);
 
   useEffect(() => {
+    if (isGate) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onClose();
     };
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [onClose]);
+  }, [isGate, onClose]);
 
   // The server decides whether signing in is even possible. Showing a form
   // when Supabase is unreachable would invite a failure the user cannot fix,
@@ -140,19 +148,22 @@ export function SignInPanel({
 
   return (
     <div
-      className="signin-backdrop"
+      className={isGate ? 'signin-gate' : 'signin-backdrop'}
       role="presentation"
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
+        if (!isGate && event.target === event.currentTarget) onClose();
       }}
     >
       <div
         ref={dialogRef}
         className="glass-panel signin-panel"
-        role="dialog"
-        aria-modal="true"
+        role={isGate ? 'region' : 'dialog'}
+        aria-modal={isGate ? undefined : true}
         aria-labelledby="signin-title"
       >
+        {isGate ? (
+          <p className="signin-gate__brand">CrossFlow AI · Batam–Singapore mobility</p>
+        ) : null}
         <h2 id="signin-title" className="signin-panel__title">
           <ShieldCheck aria-hidden="true" size={ICON_SIZE.large} color="var(--accent-cyan)" />
           {identity ? 'Signed in' : 'Sign in to CrossFlow'}
@@ -201,9 +212,26 @@ export function SignInPanel({
             </div>
           </>
         ) : unavailableReason ? (
-          <p className="signin-panel__error" role="status">
-            <TriangleAlert aria-hidden="true" size={ICON_SIZE.medium} /> {unavailableReason}
-          </p>
+          <>
+            <p className="signin-panel__error" role="status">
+              <TriangleAlert aria-hidden="true" size={ICON_SIZE.medium} /> {unavailableReason}
+            </p>
+            {/* Never strand the user behind a sign-in that cannot succeed.
+                The corridor, ferry and analytics views do not require an
+                account, so a misconfigured or unreachable Supabase must not
+                blank the whole product. */}
+            {isGate ? (
+              <div className="signin-panel__actions">
+                <button
+                  type="button"
+                  className="ui-button-primary"
+                  onClick={onContinueAsGuest}
+                >
+                  Continue to CrossFlow
+                </button>
+              </div>
+            ) : null}
+          </>
         ) : (
           <form className="signin-form" onSubmit={handleSubmit}>
             <p className="signin-panel__note">
@@ -251,10 +279,10 @@ export function SignInPanel({
               <button
                 type="button"
                 className="signin-panel__secondary"
-                onClick={onClose}
+                onClick={isGate ? onContinueAsGuest : onClose}
                 disabled={busy}
               >
-                Cancel
+                {isGate ? 'Continue as guest' : 'Cancel'}
               </button>
             </div>
 

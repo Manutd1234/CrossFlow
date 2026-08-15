@@ -69,6 +69,12 @@ export function App() {
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
   const [session, setSession] = useState<StoredSession | null>(() => readStoredSession());
   const [identity, setIdentity] = useState<AuthSession | null>(null);
+  const [authResolved, setAuthResolved] = useState(false);
+  // Remembered for the tab only: a guest should not be re-prompted on every
+  // reload, but a new visit starts at the sign-in screen again.
+  const [isGuest, setIsGuest] = useState<boolean>(
+    () => window.sessionStorage?.getItem('crossflow.guest') === '1',
+  );
 
   const [corridors, setCorridors] = useState<Corridor[]>(INITIAL_CORRIDORS);
   const [ferries, setFerries] = useState<FerrySchedule[]>(INITIAL_FERRIES);
@@ -227,9 +233,12 @@ export function App() {
       }
     };
     const stored = resumeSession();
-    if (!stored) return () => { cancelled = true; };
-    validSession(stored)
-      .then(async fresh => {
+    // Always resolve through a promise so the gate's readiness flag is never
+    // set synchronously inside the effect, which would cascade renders.
+    Promise.resolve()
+      .then(async () => {
+        if (!stored) return;
+        const fresh = await validSession(stored);
         const resolved = await fetchSession(fresh);
         if (cancelled) return;
         setSession(fresh);
@@ -239,6 +248,9 @@ export function App() {
         if (cancelled) return;
         setSession(null);
         setIdentity(null);
+      })
+      .finally(() => {
+        if (!cancelled) setAuthResolved(true);
       });
     return () => { cancelled = true; };
   }, []);
@@ -248,6 +260,15 @@ export function App() {
   // resolve a role from it.
   const signInAvailable = supabaseConfigured()
     && (authStatus === null || authStatus.enabled);
+
+  const continueAsGuest = useCallback(() => {
+    window.sessionStorage?.setItem('crossflow.guest', '1');
+    setIsGuest(true);
+  }, []);
+
+  // Show the sign-in screen first. Waiting for authResolved avoids flashing it
+  // at someone whose stored session is about to restore.
+  const showAuthGate = signInAvailable && authResolved && !identity && !isGuest;
 
   const handleSelectCorridorAndSolve = useCallback((corridorId: string) => {
     const corridor = corridors.find(item => item.id === corridorId);
@@ -291,6 +312,21 @@ export function App() {
 
   return (
     <>
+      {showAuthGate ? (
+        <Suspense fallback={<LoadingPanel />}>
+          <SignInPanel
+            variant="page"
+            status={authStatus}
+            session={session}
+            identity={identity}
+            onSessionChange={setSession}
+            onIdentityChange={setIdentity}
+            onClose={continueAsGuest}
+            onContinueAsGuest={continueAsGuest}
+          />
+        </Suspense>
+      ) : null}
+
       <a className="app-skip-link" href="#main-content">Skip to main content</a>
 
       <Header
