@@ -8,7 +8,8 @@ import {
   RouteLocation, RouteOptimizationResult, RoutePreference, StoredSession, VehicleType,
 } from './types';
 import {
-  fetchAuthStatus, fetchSession, readStoredSession, supabaseConfigured, validSession,
+  completeOAuthRedirect, fetchAuthStatus, fetchSession, readStoredSession,
+  supabaseConfigured, validSession,
 } from './services/auth';
 import {
   fetchCorridorRoutes, fetchCorridors, fetchFerries, fetchOperationsSummary,
@@ -213,7 +214,19 @@ export function App() {
       if (!cancelled) setAuthStatus(status);
     });
 
-    const stored = readStoredSession();
+    // An OAuth return carries its tokens in the URL fragment and must be
+    // consumed before the stored session is read, so a fresh GitHub sign-in
+    // wins over whatever was left in storage.
+    const resumeSession = (): StoredSession | null => {
+      try {
+        return completeOAuthRedirect() ?? readStoredSession();
+      } catch {
+        // A denied or failed GitHub authorization leaves the app signed out
+        // and fully usable; the panel reports it when reopened.
+        return readStoredSession();
+      }
+    };
+    const stored = resumeSession();
     if (!stored) return () => { cancelled = true; };
     validSession(stored)
       .then(async fresh => {

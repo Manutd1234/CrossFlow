@@ -13,9 +13,12 @@ vi.stubEnv('VITE_SUPABASE_URL', SUPABASE_URL);
 vi.stubEnv('VITE_SUPABASE_PUBLISHABLE_KEY', PUBLISHABLE_KEY);
 
 const {
-  AuthError, fetchSession, readStoredSession, refreshSession,
-  signIn, signOut, supabaseConfigured, validSession,
+  AuthError, completeOAuthRedirect, fetchSession, readStoredSession,
+  refreshSession, signIn, signInWithGitHub, signOut, supabaseConfigured,
+  validSession,
 } = await import('./auth');
+
+type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
 function jsonResponse(body: unknown, status = 200) {
   return {
@@ -71,7 +74,7 @@ describe('supabase sign-in', () => {
   });
 
   it('sends the password to Supabase and never to the CrossFlow API', async () => {
-    const fetchMock = vi.fn(async (..._args: unknown[]) => jsonResponse(TOKEN_PAYLOAD));
+    const fetchMock = vi.fn<FetchLike>(async () => jsonResponse(TOKEN_PAYLOAD));
     vi.stubGlobal('fetch', fetchMock);
 
     await signIn('driver@example.com', 'hunter2');
@@ -122,7 +125,7 @@ describe('supabase sign-in', () => {
 
 describe('session lifetime', () => {
   it('refreshes a session that is close to expiry', async () => {
-    const fetchMock = vi.fn(async (..._args: unknown[]) => jsonResponse({
+    const fetchMock = vi.fn<FetchLike>(async () => jsonResponse({
       ...TOKEN_PAYLOAD, access_token: 'refreshed-token',
     }));
     vi.stubGlobal('fetch', fetchMock);
@@ -170,7 +173,7 @@ describe('session lifetime', () => {
 
 describe('role resolution', () => {
   it('takes the role from the API, not from the token', async () => {
-    const fetchMock = vi.fn(async (..._args: unknown[]) => jsonResponse({
+    const fetchMock = vi.fn<FetchLike>(async () => jsonResponse({
       user_id: 'user-1', role: 'DRIVER', display_name: 'Test Driver',
       expires_at: 1, role_source: 'crossflow_profiles',
     }));
@@ -194,5 +197,68 @@ describe('role resolution', () => {
     await expect(fetchSession({
       accessToken: 'stale', refreshToken: 'r', expiresAtMs: Date.now() + 1000,
     })).rejects.toThrow('session has expired');
+  });
+});
+
+describe('github oauth', () => {
+  function stubLocation(hash: string) {
+    const replaceState = vi.fn();
+    const assign = vi.fn();
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: {
+        hash,
+        pathname: '/',
+        search: '',
+        origin: 'http://localhost:3000',
+        assign,
+      },
+    });
+    Object.defineProperty(window, 'history', {
+      configurable: true,
+      value: { replaceState },
+    });
+    return { assign, replaceState };
+  }
+
+  it('sends the browser to Supabase with the provider and return URL', () => {
+    const { assign } = stubLocation('');
+    signInWithGitHub('http://localhost:3000');
+
+    const target = new URL(assign.mock.calls[0][0] as string);
+    expect(target.origin).toBe(SUPABASE_URL);
+    expect(target.pathname).toBe('/auth/v1/authorize');
+    expect(target.searchParams.get('provider')).toBe('github');
+    expect(target.searchParams.get('redirect_to')).toBe('http://localhost:3000');
+  });
+
+  it('consumes tokens from the return fragment and stores the session', () => {
+    stubLocation('#access_token=gh-token&refresh_token=gh-refresh&expires_in=3600&token_type=bearer');
+
+    const session = completeOAuthRedirect();
+
+    expect(session?.accessToken).toBe('gh-token');
+    expect(session?.refreshToken).toBe('gh-refresh');
+    expect(readStoredSession()?.accessToken).toBe('gh-token');
+  });
+
+  it('always strips the fragment so a live token cannot sit in the address bar', () => {
+    const { replaceState } = stubLocation('#access_token=gh-token&expires_in=3600');
+    completeOAuthRedirect();
+    expect(replaceState).toHaveBeenCalledWith(null, '', '/');
+  });
+
+  it('reports a denied authorization and still clears the fragment', () => {
+    const { replaceState } = stubLocation('#error=access_denied&error_description=The+user+denied+access');
+
+    expect(() => completeOAuthRedirect()).toThrow('The user denied access');
+    expect(replaceState).toHaveBeenCalled();
+    expect(readStoredSession()).toBeNull();
+  });
+
+  it('ignores an ordinary page load with no fragment', () => {
+    const { replaceState } = stubLocation('');
+    expect(completeOAuthRedirect()).toBeNull();
+    expect(replaceState).not.toHaveBeenCalled();
   });
 });
