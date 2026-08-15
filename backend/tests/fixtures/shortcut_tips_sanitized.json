@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "tips": [
+    {
+      "tip_id": "sanitized-forum-101",
+      "start": {"lat": "1.1000004", "lng": "104.0000004"},
+      "via": [[1.1005, 104.0005]],
+      "end": {"latitude": 1.101, "longitude": 104.001},
+      "vehicle_modes": ["motorcycle", "passenger_car"],
+      "confidence": 0.73,
+      "claimed_distance_m": 165,
+      "claimed_duration_minutes": 0.75,
+      "road_quality": "rough",
+      "snippet": "Sanitized community report: a narrow connector may join the two mapped road endpoints."
+    }
+  ]
+}

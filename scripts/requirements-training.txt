@@ -1,0 +1,6 @@
+# Optional local/Modal tooling; intentionally excluded from the API runtime.
+-r ../backend/requirements.txt
+joblib==1.5.3
+modal==1.5.3
+pandas==3.0.5
+psycopg2-binary==2.9.12
