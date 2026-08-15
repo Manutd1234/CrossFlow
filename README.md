@@ -426,6 +426,7 @@ secrets are configured. Set only the integrations you use:
 | Variable | Purpose |
 |---|---|
 | `VITE_API_BASE_URL` | API origin for a split frontend/backend deployment; local Vite and the bundled Vercel config use same-origin `/api` by default. |
+| `VITE_API_ENABLED` | Set to `false` for emergency demo mode: skip unavailable application API calls and use bundled simulations. Supabase browser authentication is unaffected. |
 | `VITE_SUPABASE_URL` | Supabase project URL used by the React sign-in flow. It must identify the same project as the server-side `SUPABASE_URL`. |
 | `VITE_SUPABASE_PUBLISHABLE_KEY` (or legacy `VITE_SUPABASE_ANON_KEY`) | Browser-safe Supabase key for direct sign-in and token refresh. Never put `SUPABASE_SECRET_KEY` or `SUPABASE_SERVICE_ROLE_KEY` in a `VITE_` variable. |
 | `VITE_TEST_ADMIN_EMAIL` + `VITE_TEST_ADMIN_PASSWORD` | Optional shared test administrator shown as a one-click sign-in. These values are embedded in the public browser bundle by design. Use them only with a disposable demo Supabase project containing no production data; leave either blank to hide the button. The account must already exist and have `role = 'admin'` in `crossflow_profiles`. |

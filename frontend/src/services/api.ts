@@ -32,10 +32,11 @@ import { batamParts, nextBatamHour, toBatamIso } from '../utils/batamTime';
 /** Same-origin by default (Vite proxies /api in development); configurable for split deployments. */
 const configuredApiBase = import.meta.env.VITE_API_BASE_URL?.trim().replace(/\/$/, '');
 const API_BASE = configuredApiBase ?? '';
+const API_ENABLED = import.meta.env.VITE_API_ENABLED !== 'false';
 
 
 const CORRIDOR_TIMEOUT_MS = 6000;
-const ROUTE_TIMEOUT_MS = 15000;
+const ROUTE_TIMEOUT_MS = 60_000;
 const FERRY_REFRESH_TIMEOUT_MS = 20_000;
 const FERRY_TERMINAL_MATCH_KM = 0.5;
 
@@ -51,6 +52,10 @@ function scheduleRequestFields(schedule?: RouteScheduleOptions): RouteScheduleOp
   return {};
 }
 
+function hasExactSchedule(schedule?: RouteScheduleOptions): boolean {
+  return Boolean(schedule?.departure_at?.trim() || schedule?.arrive_by?.trim());
+}
+
 function hourFromSchedule(schedule?: RouteScheduleOptions): number | undefined {
   const value = schedule?.departure_at;
   if (!value) return undefined;
@@ -60,19 +65,45 @@ function hourFromSchedule(schedule?: RouteScheduleOptions): number | undefined {
   return Number.isInteger(hour) && hour >= 0 && hour <= 23 ? hour : undefined;
 }
 
-function requireServerSchedule(schedule?: RouteScheduleOptions): void {
-  if (schedule?.arrive_by) {
-    throw new ApiRequestError(
-      'Arrive-by planning requires the scheduling API; it is unavailable right now.',
-      503,
-    );
-  }
-  if (schedule?.departure_at) {
-    throw new ApiRequestError(
-      'Exact departure-time planning requires the scheduling API; it is unavailable right now.',
-      503,
-    );
-  }
+function simulatedSchedule(
+  route: RouteOptimizationResult,
+  schedule?: RouteScheduleOptions,
+): RouteOptimizationResult {
+  const requestedDeparture = schedule?.departure_at?.trim();
+  const requestedArrival = schedule?.arrive_by?.trim();
+  if (!requestedDeparture && !requestedArrival) return route;
+
+  const totalEtaMins = route.total_eta_mins ?? route.estimated_travel_time_mins ?? 0;
+  const arrivalDeadline = requestedArrival ? new Date(requestedArrival) : null;
+  const calculatedDeparture = arrivalDeadline && !Number.isNaN(arrivalDeadline.getTime())
+    ? new Date(arrivalDeadline.getTime() - totalEtaMins * 60_000).toISOString()
+    : undefined;
+
+  return {
+    ...route,
+    planned_departure: requestedDeparture ?? calculatedDeparture ?? route.planned_departure,
+    scheduling: {
+      mode: requestedArrival ? 'ARRIVE_BY' : 'DEPART_AT',
+      requested_departure_at: requestedDeparture ?? null,
+      requested_arrive_by: requestedArrival ?? null,
+      deadline_slack_mins: requestedArrival ? 0 : null,
+    },
+    schedule_mode: requestedArrival ? 'arrive_by' : 'departure',
+    requested_departure_at: requestedDeparture,
+    requested_arrive_by: requestedArrival,
+    deadline_slack_mins: requestedArrival ? 0 : null,
+    schedule_provenance: {
+      source: 'committed_timetable_simulation',
+      snapshot_id: PUBLISHED_FERRY_TIMETABLE_METADATA.snapshot_id,
+      snapshot_verified_at: PUBLISHED_FERRY_TIMETABLE_METADATA.last_verified_at,
+      last_verified_at: PUBLISHED_FERRY_TIMETABLE_METADATA.last_verified_at,
+      latest_checked_at: null,
+      freshness_durability: 'committed_browser_snapshot',
+      shared_freshness: false,
+      live: false,
+      limitations: PUBLISHED_FERRY_TIMETABLE_METADATA.limitations,
+    },
+  };
 }
 
 export class ApiRequestError extends Error {
@@ -98,6 +129,7 @@ async function getJSON<T>(
   init?: RequestInit,
   throwClientErrors = false,
 ): Promise<T | null> {
+  if (!API_ENABLED) return null;
   try {
     const timeoutSignal = AbortSignal.timeout(timeoutMs);
     const signal = init?.signal
@@ -646,6 +678,25 @@ export async function requestRouteOptimization(
     ? (CORRIDOR_INDEX[seededCorridor.id] ?? 0)
     : Math.abs(Math.round((origin.lat * 1000) + (origin.lng * 100))) % 5;
   const effectiveHour = hourFromSchedule(schedule) ?? hour;
+  const requestBody = JSON.stringify({
+    origin_id: originId, destination_id: destinationId,
+    vehicle_type: vehicleType, hour: effectiveHour, weather,
+    route_preference: routePreference, ...scheduleRequestFields(schedule),
+  });
+  const exactSchedule = hasExactSchedule(schedule);
+  if (exactSchedule) {
+    const scheduledPayload = await getJSON<Envelope & RouteOptimizationResult>(
+      '/api/optimize-route',
+      ROUTE_TIMEOUT_MS,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: requestBody,
+      },
+      true,
+    ).then(validatedRoadPayload);
+    if (scheduledPayload) return wrap(scheduledPayload, scheduledPayload);
+  }
   const roadHedge = bundledRoadHedge(
     [origin.lat, origin.lng],
     [destination.lat, destination.lng],
@@ -654,18 +705,14 @@ export async function requestRouteOptimization(
   );
   const backendAbort = new AbortController();
   const sources = await raceRoadRouteSources(
-    getJSON<Envelope & RouteOptimizationResult>(
+    exactSchedule ? Promise.resolve(null) : getJSON<Envelope & RouteOptimizationResult>(
       '/api/optimize-route',
       ROUTE_TIMEOUT_MS,
       {
         method: 'POST',
         signal: backendAbort.signal,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          origin_id: originId, destination_id: destinationId,
-          vehicle_type: vehicleType, hour: effectiveHour, weather,
-          route_preference: routePreference, ...scheduleRequestFields(schedule),
-        }),
+        body: requestBody,
       },
       true,
     ).then(validatedRoadPayload),
@@ -676,10 +723,9 @@ export async function requestRouteOptimization(
   if (sources.payload) {
     return wrap(sources.payload, sources.payload);
   }
-  requireServerSchedule(schedule);
   const fallback = offlineOptimize(originId, destinationId, vehicleType, effectiveHour, weather);
   if (!sources.roadPlan) throw roadRoutingUnavailable();
-  return wrap(null, applyBundledRoadPlan(
+  return wrap(null, simulatedSchedule(applyBundledRoadPlan(
     fallback,
     sources.roadPlan,
     vehicleType,
@@ -687,7 +733,7 @@ export async function requestRouteOptimization(
     weather,
     corridorIdx,
     routePreference,
-  ));
+  ), schedule));
 }
 
 /** Retrieve the immutable route assigned to a driver by its seven-character code. */
@@ -1413,10 +1459,24 @@ export async function requestFreeRouteOptimization(
       true,
     ).then(validatedRoadPayload);
     if (payload) return wrap(payload, payload);
-    requireServerSchedule(schedule);
-    return wrap(null, offlineCrossBorderOptimize(
+    return wrap(null, simulatedSchedule(offlineCrossBorderOptimize(
       origin, destination, vehicleType, effectiveHour, routePreference,
-    ));
+    ), schedule));
+  }
+
+  const exactSchedule = hasExactSchedule(schedule);
+  if (exactSchedule) {
+    const scheduledPayload = await getJSON<Envelope & RouteOptimizationResult>(
+      '/api/optimize-free-route',
+      ROUTE_TIMEOUT_MS,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: requestBody,
+      },
+      true,
+    ).then(validatedRoadPayload);
+    if (scheduledPayload) return wrap(scheduledPayload, scheduledPayload);
   }
 
   const roadHedge = bundledRoadHedge(
@@ -1427,7 +1487,7 @@ export async function requestFreeRouteOptimization(
   );
   const backendAbort = new AbortController();
   const sources = await raceRoadRouteSources(
-    getJSON<Envelope & RouteOptimizationResult>(
+    exactSchedule ? Promise.resolve(null) : getJSON<Envelope & RouteOptimizationResult>(
       '/api/optimize-free-route',
       ROUTE_TIMEOUT_MS,
       {
@@ -1444,14 +1504,13 @@ export async function requestFreeRouteOptimization(
   if (sources.payload) {
     return wrap(sources.payload, sources.payload);
   }
-  requireServerSchedule(schedule);
   const fallback = offlineOptimizeFree(origin, destination, vehicleType, effectiveHour, weather);
   if (!sources.roadPlan) {
-    return wrap(null, offlineCrossBorderOptimize(
+    return wrap(null, simulatedSchedule(offlineCrossBorderOptimize(
       origin, destination, vehicleType, effectiveHour, routePreference,
-    ));
+    ), schedule));
   }
-  return wrap(null, applyBundledRoadPlan(
+  return wrap(null, simulatedSchedule(applyBundledRoadPlan(
     fallback,
     sources.roadPlan,
     vehicleType,
@@ -1459,7 +1518,7 @@ export async function requestFreeRouteOptimization(
     weather,
     corridorIdx,
     routePreference,
-  ));
+  ), schedule));
 }
 
 export async function requestMultiStopRouteOptimization(
