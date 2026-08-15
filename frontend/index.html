@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CrossFlow AI — sign in</title>
+<!--
+  Deliberately disposable placeholder (roadmap decision D6).
+
+  It exists to prove one thing end to end: the password goes to Supabase, never
+  to the CrossFlow API, and the API answers with a role it resolved from the
+  database rather than one the client claimed.
+
+  No build step, no package.json, nothing for CI to run. The real admin and
+  driver views are WP9/WP10 work and will replace this entirely.
+
+  Open it directly in a browser (file://) or serve the folder statically. The
+  API allows any origin and uses no cookies, so both work.
+-->
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --ink: #14161a; --muted: #5b6472;
+    --line: #dfe3e9; --accent: #1f5fd8; --ok: #127a4a; --bad: #b3261e;
+    --code: #f0f2f5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12141a; --panel: #1a1d25; --ink: #e8eaee; --muted: #99a2b2;
+      --line: #2b303b; --accent: #7aa2f7; --ok: #4ec98a; --bad: #ff8a80;
+      --code: #22262f;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 2rem 1rem; background: var(--bg); color: var(--ink);
+    font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main { max-width: 46rem; margin: 0 auto; }
+  h1 { font-size: 1.4rem; margin: 0 0 .25rem; }
+  .sub { color: var(--muted); margin: 0 0 1.5rem; }
+  section {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 1.1rem 1.2rem; margin-bottom: 1rem;
+  }
+  h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .06em;
+       color: var(--muted); margin: 0 0 .8rem; font-weight: 600; }
+  label { display: block; font-size: .82rem; color: var(--muted); margin: .6rem 0 .2rem; }
+  input {
+    width: 100%; padding: .5rem .6rem; border: 1px solid var(--line);
+    border-radius: 6px; background: var(--bg); color: var(--ink); font: inherit;
+  }
+  .row { display: flex; gap: .6rem; flex-wrap: wrap; margin-top: .9rem; }
+  button {
+    padding: .5rem .9rem; border-radius: 6px; border: 1px solid var(--accent);
+    background: var(--accent); color: #fff; font: inherit; cursor: pointer;
+  }
+  button.ghost { background: transparent; color: var(--accent); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  pre {
+    background: var(--code); border-radius: 6px; padding: .7rem .8rem;
+    overflow-x: auto; font-size: .82rem; margin: .6rem 0 0;
+  }
+  .pill {
+    display: inline-block; padding: .12rem .5rem; border-radius: 999px;
+    font-size: .78rem; font-weight: 600; border: 1px solid currentColor;
+  }
+  .ok { color: var(--ok); } .bad { color: var(--bad); }
+  .note { font-size: .82rem; color: var(--muted); margin-top: .7rem; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>CrossFlow AI</h1>
+  <p class="sub">Placeholder sign-in. Proves the auth contract end to end.</p>
+
+  <section>
+    <h2>1 · Connection</h2>
+    <label for="api">CrossFlow API base URL</label>
+    <input id="api" value="http://localhost:8000" />
+    <label for="url">Supabase project URL</label>
+    <input id="url" placeholder="https://your-project-ref.supabase.co" />
+    <label for="key">Supabase publishable key (safe in client code)</label>
+    <input id="key" placeholder="sb_publishable_… or the legacy anon key" />
+    <div class="row">
+      <button id="save">Save &amp; check API</button>
+      <button id="clear" class="ghost">Forget</button>
+    </div>
+    <pre id="status">Not checked yet.</pre>
+  </section>
+
+  <section>
+    <h2>2 · Sign in</h2>
+    <p class="note" style="margin-top:0">
+      These credentials go straight to Supabase. The CrossFlow API never sees
+      them — it only ever receives the resulting access token.
+    </p>
+    <label for="email">Email</label>
+    <input id="email" type="email" autocomplete="username" />
+    <label for="password">Password</label>
+    <input id="password" type="password" autocomplete="current-password" />
+    <div class="row">
+      <button id="signin">Sign in</button>
+      <button id="signout" class="ghost">Sign out</button>
+    </div>
+    <pre id="auth">Signed out.</pre>
+  </section>
+
+  <section>
+    <h2>3 · Ask the server who you are</h2>
+    <div class="row" style="margin-top:0">
+      <button id="session">GET /api/auth/session</button>
+      <button id="admin" class="ghost">GET /api/auth/admin-check</button>
+    </div>
+    <pre id="result">No request sent.</pre>
+    <p class="note">
+      The <code>role</code> below is read from <code>crossflow_profiles</code>
+      with your own token, so row-level security decides it. Changing your role
+      in the browser is impossible: nothing you send here is trusted.
+    </p>
+  </section>
+</main>
+
+<script type="module">
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+const $ = (id) => document.getElementById(id);
+const STORE = "crossflow.auth.placeholder";
+let supabase = null;
+
+const saved = JSON.parse(localStorage.getItem(STORE) || "{}");
+$("api").value = saved.api || "http://localhost:8000";
+$("url").value = saved.url || "";
+$("key").value = saved.key || "";
+
+function show(el, value, cls) {
+  const node = $(el);
+  node.textContent =
+    typeof value === "string" ? value : JSON.stringify(value, null, 2);
+  node.className = cls || "";
+}
+
+function client() {
+  const url = $("url").value.trim();
+  const key = $("key").value.trim();
+  if (!url || !key) throw new Error("Enter the Supabase URL and publishable key first.");
+  if (!supabase) supabase = createClient(url, key);
+  // Exposed so the row-level security checks in the roadmap can be run from
+  // the browser console. Reading the database as the signed-in user is the
+  // only way to prove the policies work; the API cannot prove it for you.
+  window.crossflow = { supabase, token };
+  return supabase;
+}
+
+async function token() {
+  const { data } = await client().auth.getSession();
+  if (!data.session) throw new Error("Sign in first.");
+  return data.session.access_token;
+}
+
+async function callApi(path, withAuth = true) {
+  const headers = {};
+  if (withAuth) headers.Authorization = `Bearer ${await token()}`;
+  const response = await fetch($("api").value.trim() + path, { headers });
+  const body = await response.json().catch(() => ({}));
+  return { status: response.status, body };
+}
+
+$("save").onclick = async () => {
+  localStorage.setItem(STORE, JSON.stringify({
+    api: $("api").value.trim(),
+    url: $("url").value.trim(),
+    key: $("key").value.trim(),
+  }));
+  supabase = null;
+  try {
+    // Deliberately unauthenticated: this endpoint is public so a client can
+    // tell whether signing in is even possible before showing a form.
+    const { status, body } = await callApi("/api/auth/status", false);
+    show("status", { status, ...body }, body.enabled ? "ok" : "bad");
+  } catch (error) {
+    show("status", `Cannot reach the API: ${error.message}`, "bad");
+  }
+};
+
+$("clear").onclick = () => {
+  localStorage.removeItem(STORE);
+  supabase = null;
+  show("status", "Cleared.");
+};
+
+$("signin").onclick = async () => {
+  try {
+    const { data, error } = await client().auth.signInWithPassword({
+      email: $("email").value.trim(),
+      password: $("password").value,
+    });
+    if (error) throw error;
+    show("auth", {
+      signed_in_as: data.user.email,
+      user_id: data.user.id,
+      access_token: data.session.access_token.slice(0, 24) + "…",
+    }, "ok");
+  } catch (error) {
+    show("auth", error.message, "bad");
+  }
+};
+
+$("signout").onclick = async () => {
+  try {
+    await client().auth.signOut();
+    show("auth", "Signed out.");
+  } catch (error) {
+    show("auth", error.message, "bad");
+  }
+};
+
+$("session").onclick = async () => {
+  try {
+    const { status, body } = await callApi("/api/auth/session");
+    show("result", { status, ...body }, status === 200 ? "ok" : "bad");
+  } catch (error) {
+    show("result", error.message, "bad");
+  }
+};
+
+$("admin").onclick = async () => {
+  try {
+    const { status, body } = await callApi("/api/auth/admin-check");
+    show("result", {
+      status,
+      ...body,
+      hint: status === 403 ? "Expected for a driver account." : undefined,
+    }, status === 200 ? "ok" : "bad");
+  } catch (error) {
+    show("result", error.message, "bad");
+  }
+};
+</script>
+</body>
+</html>

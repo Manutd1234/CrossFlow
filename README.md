@@ -150,6 +150,40 @@ See [Routing Intelligence Architecture](docs/ROUTING_INTELLIGENCE_ARCHITECTURE.m
 for the cost units, vehicle constraints, source-policy schema, retention,
 review/promotion flow, RLS boundary, cache, and fallback behavior.
 
+### Authentication and the credential boundary
+
+Human sign-in (admins and drivers) is separate from the machine secret that
+guards ingestion and retraining. `CROSSFLOW_ADMIN_TOKEN` remains a shared
+deployment credential for backend-to-backend operations; it is never a login,
+and presenting it as a user token is rejected.
+
+Identity comes from Supabase Auth. Clients authenticate with Supabase
+**directly**, so this API never receives a password and inherits Supabase's rate
+limiting, lockout and password-reset handling. The API receives only the
+resulting access token, verifies it, and resolves the caller's role from
+`crossflow_profiles` — never from the request body, and never from the token's
+own `user_metadata`, which users can write themselves.
+
+Three credentials, three purposes. Confusing them is the one mistake that
+disables every access-control policy while leaving the application apparently
+working:
+
+| Credential | Used by | Subject to row-level security |
+|---|---|---|
+| `SUPABASE_SECRET_KEY` | Backend-owned tables, ingestion, background jobs | **No — bypasses it entirely** |
+| `SUPABASE_PUBLISHABLE_KEY` | Identifies the project on user-scoped calls | n/a — grants nothing alone |
+| The caller's access token | Every admin and driver read or write | **Yes — this is the boundary** |
+
+The separation is structural rather than conventional:
+[`backend/auth/transport.py`](backend/auth/transport.py) never reads a secret
+key from the environment, and a test asserts that it cannot. Apply
+[`backend/auth/schema.sql`](backend/auth/schema.sql) and set
+`CROSSFLOW_AUTH_MODE=supabase` to enable sign-in; until then every public
+corridor, ferry and model endpoint keeps serving unauthenticated, and only the
+`/api/auth/*` routes report that sign-in is unavailable. Auth is a per-route
+dependency, never middleware, so an unreachable Supabase cannot blank the app.
+See [Auth Backend Roadmap](docs/AUTH_BACKEND_ROADMAP.md).
+
 ---
 
 ## 🏗️ Technology Stack
@@ -166,10 +200,12 @@ review/promotion flow, RLS boundary, cache, and fallback behavior.
 ## 📁 Project Structure
 
 ```
-├── backend/     # FastAPI + scikit-learn API and backend regression runner
-├── scripts/     # Local launcher, graph tooling, and optional training jobs
-├── .github/     # GitHub Actions CI
-└── docs/        # Pitch outline & hackathon reference material
+├── backend/      # FastAPI + scikit-learn API and backend regression runner
+│   └── auth/     # Human sign-in: schema, user-scoped transport, boundary tests
+├── frontend/     # Placeholder sign-in page (no build step; see roadmap D6)
+├── scripts/      # Local launcher, graph tooling, and optional training jobs
+├── .github/      # GitHub Actions CI
+└── docs/         # Pitch outline & hackathon reference material
 ```
 
 ---
