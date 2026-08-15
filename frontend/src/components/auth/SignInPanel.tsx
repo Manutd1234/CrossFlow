@@ -7,9 +7,11 @@ import {
   fetchSession,
   projectMismatch,
   signIn,
+  signInAsTestAdmin,
   signInWithGitHub,
   signOut,
   supabaseConfigured,
+  testAdminConfigured,
   validSession,
 } from '../../services/auth';
 import './SignInPanel.css';
@@ -86,18 +88,30 @@ export function SignInPanel({
         ? 'The server cannot reach Supabase, so sign-in is unavailable right now.'
         : projectMismatch(status);
 
-  const handleSubmit = async (event: React.FormEvent) => {
-    event.preventDefault();
+  const authenticate = async (
+    requestSession: () => Promise<StoredSession>,
+    requireAdmin = false,
+  ) => {
     if (busy) return;
     setError(null);
     setBusy(true);
+    let stored: StoredSession | null = null;
     try {
-      const stored = await signIn(email, password);
-      onSessionChange(stored);
+      stored = await requestSession();
       const resolved = await fetchSession(stored);
+      if (requireAdmin && resolved.role.toLowerCase() !== 'admin') {
+        throw new AuthError(
+          'The configured test account is not an admin. Promote its CrossFlow profile first.',
+        );
+      }
+      onSessionChange(stored);
       onIdentityChange(resolved);
       setPassword('');
     } catch (caught) {
+      // signIn persists before the API resolves the role. Clear that credential
+      // if role verification fails so a broken demo account cannot reappear on
+      // the next page load as though it had been accepted.
+      if (stored) await signOut(stored);
       const message = caught instanceof AuthError
         ? caught.message
         : 'Sign-in failed. Please try again.';
@@ -107,6 +121,15 @@ export function SignInPanel({
     } finally {
       setBusy(false);
     }
+  };
+
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    await authenticate(() => signIn(email, password));
+  };
+
+  const handleTestAdmin = async () => {
+    await authenticate(signInAsTestAdmin, true);
   };
 
   const handleSignOut = async () => {
@@ -284,6 +307,24 @@ export function SignInPanel({
                 {busy ? 'Signing in…' : 'Sign in'}
               </button>
             </div>
+
+            {testAdminConfigured() ? (
+              <div className="signin-test-admin">
+                <p>
+                  Want to explore the full workspace? Use the shared test admin
+                  for this demo environment.
+                </p>
+                <button
+                  type="button"
+                  className="signin-provider signin-provider--test-admin"
+                  onClick={handleTestAdmin}
+                  disabled={busy}
+                >
+                  <ShieldCheck aria-hidden="true" size={ICON_SIZE.large} />
+                  {busy ? 'Signing in…' : 'Sign in as test admin'}
+                </button>
+              </div>
+            ) : null}
 
             <div className="signin-divider" aria-hidden="true"><span>or</span></div>
 

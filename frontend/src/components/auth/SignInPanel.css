@@ -276,6 +276,34 @@
   cursor: not-allowed;
 }
 
+.signin-test-admin {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 12px;
+  border: 1px solid rgba(23, 110, 115, 0.25);
+  border-radius: var(--radius-sm);
+  background: rgba(23, 110, 115, 0.07);
+}
+
+.signin-test-admin p {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
+.signin-provider--test-admin {
+  border-color: rgba(23, 110, 115, 0.38);
+  background: rgba(23, 110, 115, 0.1);
+  color: var(--lagoon-text);
+}
+
+.signin-provider--test-admin:hover:not(:disabled) {
+  border-color: var(--accent-cyan);
+  background: rgba(23, 110, 115, 0.16);
+}
+
 /* Full-page gate shown before the workspace loads. */
 .signin-gate {
   position: fixed;

@@ -158,6 +158,22 @@ Note that this statement works because the SQL Editor connects as `postgres`.
 The same statement from a driver session is rejected by the role-guard trigger,
 which is the whole point.
 
+For a dedicated public demo project, the React sign-in panel can expose that
+admin as a one-click test account. Put the same account credentials in
+`frontend/.env.local` (or in the test deployment's Vite build environment):
+
+```dotenv
+VITE_TEST_ADMIN_EMAIL=admin@test.local
+VITE_TEST_ADMIN_PASSWORD=<the disposable test account password>
+```
+
+Both values are compiled into the browser bundle and are therefore public.
+Enable this only for a disposable Supabase project with test data and no real
+users. Leave either value unset on production deployments; the test-admin
+button then disappears. After sign-in, CrossFlow still asks the API to resolve
+the account's role from `crossflow_profiles` and rejects the shortcut if it is
+not actually an admin.
+
 **Checkpoint.** Start the normal development stack with `scripts/dev.sh`, after
 putting `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` in
 `frontend/.env.local`. Open <http://localhost:3000>, then:

@@ -8,14 +8,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const SUPABASE_URL = 'https://wtednggryrikyvkuhqjo.supabase.co';
 const PUBLISHABLE_KEY = 'sb_publishable_test';
+const TEST_ADMIN_EMAIL = 'admin@test.local';
+const TEST_ADMIN_PASSWORD = 'test-admin-password';
 
 vi.stubEnv('VITE_SUPABASE_URL', SUPABASE_URL);
 vi.stubEnv('VITE_SUPABASE_PUBLISHABLE_KEY', PUBLISHABLE_KEY);
+vi.stubEnv('VITE_TEST_ADMIN_EMAIL', TEST_ADMIN_EMAIL);
+vi.stubEnv('VITE_TEST_ADMIN_PASSWORD', TEST_ADMIN_PASSWORD);
 
 const {
   AuthError, completeOAuthRedirect, fetchSession, projectMismatch,
-  readStoredSession, refreshSession, signIn, signInWithGitHub, signOut,
-  supabaseConfigured, validSession,
+  readStoredSession, refreshSession, signIn, signInAsTestAdmin, signInWithGitHub,
+  signOut, supabaseConfigured, testAdminConfigured, validSession,
 } = await import('./auth');
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
@@ -96,6 +100,22 @@ describe('supabase sign-in', () => {
     expect(stored?.accessToken).toBe('access-token-abc');
     expect(stored?.refreshToken).toBe('refresh-token-xyz');
     expect(stored?.expiresAtMs).toBeGreaterThan(Date.now());
+  });
+
+  it('offers the configured test admin without sending its password to CrossFlow', async () => {
+    const fetchMock = vi.fn<FetchLike>(async () => jsonResponse(TOKEN_PAYLOAD));
+    vi.stubGlobal('fetch', fetchMock);
+
+    expect(testAdminConfigured()).toBe(true);
+    await signInAsTestAdmin();
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`${SUPABASE_URL}/auth/v1/token?grant_type=password`);
+    expect(JSON.parse(String(init.body))).toEqual({
+      email: TEST_ADMIN_EMAIL,
+      password: TEST_ADMIN_PASSWORD,
+    });
+    expect(String(url)).not.toContain('/api/');
   });
 
   it('surfaces Supabase\'s own message instead of a generic failure', async () => {
