@@ -6161,3 +6161,10 @@ a:focus-visible {
     width: 100%;
   }
 }
+
+/* Shown when a journey is planned but cannot meet the requested arrival. */
+.route-schedule-miss {
+  border-color: rgba(217, 165, 90, 0.42);
+  background: rgba(217, 165, 90, 0.1);
+  color: var(--sunset-text);
+}

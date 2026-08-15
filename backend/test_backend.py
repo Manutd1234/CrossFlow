@@ -5127,6 +5127,39 @@ def test_multi_stop_route_chains_legs_into_one_schedule():
     assert second_departure - first_arrival == timedelta(minutes=20)
 
 
+def test_multi_stop_still_plans_when_the_arrival_cannot_be_met():
+    """An impossible deadline must not cost the traveller their route."""
+    # The fixture journey takes about 53 minutes, so a twenty-minute deadline
+    # cannot be satisfied by any departure, not even leaving immediately.
+    deadline = WEEKDAY_1400 + timedelta(minutes=20)
+    result = _multi_stop_result(arrive_by=deadline)
+
+    # The journey is still planned in full.
+    assert result["corridor"]["stop_count"] == 3
+    assert result["legs"]
+    assert result["alternative_routes"]
+
+    feasibility = result["schedule_feasibility"]
+    assert feasibility["meets_requested_arrival"] is False
+    # Saying by how much is the point: "unavailable" leaves the traveller
+    # unable to tell whether they are two minutes or two hours short.
+    assert feasibility["shortfall_mins"] > 0
+    assert "cannot be met" in feasibility["note"]
+
+
+def test_multi_stop_reports_a_met_arrival_as_met():
+    """The same field must distinguish a satisfied deadline from a missed one."""
+    deadline = WEEKDAY_1400 + timedelta(hours=12)
+    result = _multi_stop_result(arrive_by=deadline)
+
+    feasibility = result["schedule_feasibility"]
+    assert feasibility["meets_requested_arrival"] is True
+    assert feasibility["shortfall_mins"] == 0.0
+    assert feasibility["note"] is None
+    arrival = datetime.fromisoformat(result["estimated_arrival"])
+    assert arrival <= deadline
+
+
 def test_multi_stop_offers_whole_journey_alternatives():
     """A multi-stop journey must offer real alternatives, not just one chain."""
     result = _multi_stop_result()

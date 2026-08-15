@@ -1292,6 +1292,17 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
               </p>
             )}
 
+            {/* The journey is still planned when the requested arrival cannot
+                be met, so say by how much rather than presenting the schedule
+                as if it satisfied the request. */}
+            {result.schedule_feasibility
+              && !result.schedule_feasibility.meets_requested_arrival && (
+              <p role="note" className="route-alternatives-note route-schedule-miss">
+                <TriangleAlert size={ICON_SIZE.medium} aria-hidden="true" className="route-note-icon" />
+                <span>{result.schedule_feasibility.note}</span>
+              </p>
+            )}
+
                     </div>
                   ),
                 },

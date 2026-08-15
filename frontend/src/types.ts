@@ -463,6 +463,7 @@ export interface RouteSchedulingMetadata {
 }
 
 export interface RouteOptimizationResult {
+  schedule_feasibility?: ScheduleFeasibility | null;
   /** Content-addressed identifier returned by the authoritative route API. */
   route_id?: string;
   /** Short seven-character code suitable for driver handoff. */
@@ -925,6 +926,16 @@ export interface FreeLocation {
   snapped_lat?: number;
   snapped_lng?: number;
   supported_region?: 'BATAM' | 'SINGAPORE' | null;
+}
+
+/** Why a requested arrival could or could not be met. */
+export interface ScheduleFeasibility {
+  requested_arrival: string;
+  meets_requested_arrival: boolean;
+  earliest_departure: string;
+  earliest_arrival: string | null;
+  shortfall_mins: number;
+  note: string | null;
 }
 
 // ---------------------------------------------------------------------------
