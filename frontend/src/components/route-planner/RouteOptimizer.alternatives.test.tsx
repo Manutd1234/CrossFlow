@@ -322,6 +322,7 @@ describe('selectable road alternatives', () => {
         vehicleType="COMMUTER"
         setVehicleType={vi.fn()}
         routePreference="BALANCED"
+        setRoutePreference={vi.fn()}
         weather={0}
         setWeather={vi.fn()}
         hour={14}
