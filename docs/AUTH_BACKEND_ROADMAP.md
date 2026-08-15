@@ -1,8 +1,9 @@
 # Auth Backend Roadmap — WP8
 
-> Implementation roadmap for the authentication half of the freight pivot
-> (`FREIGHT_PIVOT_HANDOFF.md` §WP8). Backend only. Written against the repo as
-> it actually is on 15 Aug 2026, not as the handoff assumed it.
+> Implementation roadmap for the authentication half of the freight pivot.
+> This document is retained as the design record; the implementation described
+> below is now present in the current checkout. Re-verify the live Supabase steps
+> before treating the integration as complete.
 
 ## Status
 
@@ -13,7 +14,7 @@
 | A3 identity and role resolution | Done | `backend/auth/identity.py` |
 | A4 API surface | Done | 3 endpoints live in the OpenAPI schema |
 | A5 boundary tests | Done | 25 tests, all passing |
-| A6 placeholder client | Done | `frontend/index.html` |
+| A6 frontend sign-in flow | Done | `frontend/src/services/auth.ts`, `frontend/src/components/auth/SignInPanel.tsx` |
 | A7 configuration and docs | Done | `.env.example`, README, CI step |
 
 Verified locally: 25/25 auth tests pass; the 105 existing modular tests still
@@ -35,14 +36,14 @@ handoff and change the plan.
 
 | Finding | Consequence |
 |---|---|
-| **The frontend is gone.** Commits `c4b3a93` / `3533ad7` removed the workspace; there is no `frontend/` directory. | WP8's `frontend/src/services/auth.ts` and `components/auth/` are **not buildable**. Deliverable is a backend auth surface plus a documented client contract. See §8. |
+| **The frontend is the React/Vite workspace.** The auth service and sign-in panel are part of the build. | The old disposable-client assumption is obsolete; verify auth through the dashboard at `http://localhost:3000` with `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY`. |
 | [`supabase_server.py`](../backend/services/supabase_server.py) is **deliberately service-role-only** — its docstring says it "intentionally does not know about browser/anonymous keys", and `_REST_PATH` hard-restricts paths to `^/rest/v1/…`. | We **cannot** route user-scoped calls through it, and must not weaken it. A second, user-scoped transport is required. This is the mechanical form of the handoff's headline warning. |
-| Zero third-party HTTP or crypto deps. Everything is stdlib `urllib` ([`backend/requirements.txt`](../backend/requirements.txt): fastapi, uvicorn, pydantic, numpy, scikit-learn, certifi). | Adding `PyJWT[crypto]` for local JWT verification would be the first crypto dependency in the project and inflate the Vercel bundle. Drives Decision D1. |
-| `_require_admin()` ([`main.py:340`](../backend/main.py#L340)) is a `secrets.compare_digest` check on `CROSSFLOW_ADMIN_TOKEN`, guarding 6 machine endpoints. | Stays exactly as-is. Two mechanisms, two purposes. |
+| Zero third-party HTTP or crypto deps. Everything is stdlib `urllib` ([`backend/requirements.txt`](../backend/requirements.txt): fastapi, uvicorn, pydantic, numpy, scikit-learn, certifi, tzdata). | Adding `PyJWT[crypto]` for local JWT verification would be the first crypto dependency in the project and inflate the Vercel bundle. Drives Decision D1. |
+| `_require_admin()` ([`main.py:681`](../backend/main.py#L681)) is a `secrets.compare_digest` check on `CROSSFLOW_ADMIN_TOKEN`, guarding the protected machine-operation endpoints. | Stays separate from human Supabase auth. Two mechanisms, two purposes. |
 | CORS is `allow_origins=["*"]` with `allow_credentials=False` ([`main.py:76`](../backend/main.py#L76)). | Correct and needs **no change** — we authenticate with an `Authorization` header, not cookies. Documented so nobody "fixes" it into a wildcard+credentials violation. |
-| SQL convention: RLS on, explicit `revoke … from public, anon, authenticated`, `set search_path`, guarded rerunnable DDL. See [`routing_intelligence.sql`](../backend/data/routing_intelligence.sql). | `auth_and_deliveries.sql` follows the same house style — but **inverts one rule**: it is the first schema that intentionally grants `authenticated` access, because RLS is the boundary here. |
+| SQL convention: RLS on, explicit `revoke … from public, anon, authenticated`, `set search_path`, guarded rerunnable DDL. See [`routing_intelligence.sql`](../backend/data/routing_intelligence.sql). | [`backend/auth/schema.sql`](../backend/auth/schema.sql) follows the same house style and intentionally grants `authenticated` access only where RLS is the boundary. |
 | Optional stores fail closed behind an explicit env opt-in (`CROSSFLOW_ROUTING_INTELLIGENCE_STORE=local\|supabase`). | Auth reuses this exact pattern: `CROSSFLOW_AUTH_MODE=disabled\|supabase`. Public endpoints keep working when it is off. |
-| Tests are `unittest`, call endpoint functions directly with `patch.dict(os.environ, …)`, and CI runs `test_backend.py` + `unittest discover`. | New tests match that shape; no `TestClient` needed. |
+| Auth tests are `unittest` and call endpoint functions directly with `patch.dict(os.environ, …)`; CI also runs the function-style backend tests with pytest. | The auth boundary suite is run explicitly, alongside the broader backend and frontend checks. |
 | [`tls.py`](../backend/services/tls.py) exists as the one verified trust store, but `supabase_server` builds its opener without it. | The new transport uses `tls.default_context()`. Pre-existing gap, cheap to not repeat. |
 
 ---
@@ -61,7 +62,7 @@ read every journey, and **the app looks completely correct in testing**.
 
 Enforced structurally, not by convention:
 
-- `supabase_user.py` **has no access to** `SUPABASE_SECRET_KEY`. It never reads
+- `auth/transport.py` **has no access to** `SUPABASE_SECRET_KEY`. It never reads
   that variable, so it cannot accidentally send it.
 - `supabase_server.py` stays anon-blind. Neither module can become the other.
 - A test asserts the same driver query returns **different** results through the
@@ -73,13 +74,12 @@ Enforced structurally, not by convention:
 
 ```
 backend/
-  data/auth_and_deliveries.sql      NEW  profiles + RLS policies (WP8 half)
-  services/
-    supabase_server.py              EDIT extract shared transport core only
-    supabase_user.py                NEW  user-JWT transport, anon apikey
-    auth.py                         NEW  verify token → AuthenticatedUser
-  main.py                           EDIT auth dependencies + /api/auth/session
-  tests/test_auth.py                NEW  the security boundary tests
+  auth/schema.sql                   DONE profiles + RLS policies
+  auth/transport.py                 DONE user-JWT transport, publishable apikey
+  auth/identity.py                  DONE token verification and role resolution
+  auth/routes.py                    DONE /api/auth/status, /session, /admin-check
+  auth/tests/test_auth.py           DONE security-boundary tests
+  main.py                           DONE auth router integration
 ```
 
 Request flow for a protected endpoint:
@@ -103,7 +103,7 @@ It is resolved from the `profiles` table on every request.
 
 ## 4. Decisions
 
-*All four are settled. Recorded with their reasoning so a later reader can tell
+*All listed decisions are settled. Recorded with their reasoning so a later reader can tell
 which are load-bearing.*
 
 **D1 — Token verification: call `/auth/v1/user`, do not verify locally.**
@@ -112,7 +112,7 @@ dependencies, cannot get JWKS rotation wrong, and is authoritative about
 revocation. Local ES256 verification via PyJWT is faster and offline-capable,
 but it is a new crypto dependency and a class of subtle bugs (alg confusion,
 key caching, clock skew) we do not need on a hackathon clock. Reversible later
-behind the same `auth.py` interface.
+behind the same `identity.py` interface.
 
 **D2 — The backend does not handle passwords. Confirmed.** Login, refresh and
 logout go client → Supabase Auth directly; the client sends us the resulting
@@ -127,12 +127,12 @@ gets applied for real and the boundary tests in A5 can additionally be run live
 against the project. Live verification is the acceptance gate for A1, not an
 optional extra.
 
-**D6 — The placeholder frontend is one static HTML file, no build step.**
-`frontend/index.html` loads the Supabase JS client from a CDN, signs in, and
-calls `/api/auth/session` to display the server-resolved role. It exists to
-prove the D2 contract end to end and to give whoever rebuilds the real
-admin/driver UI a working reference. It is explicitly disposable: no
-package.json, no bundler, nothing for CI to run, nothing to migrate.
+**D6 — The current frontend is a React/Vite sign-in flow.**
+`frontend/src/services/auth.ts` talks to Supabase Auth directly, stores and
+refreshes the browser session, and calls `/api/auth/session` with the resulting
+Bearer token. `SignInPanel` renders the flow inside the dashboard; it is covered
+by the frontend test suite. `frontend/index.html` is only the Vite application
+shell.
 
 **D3 — `profiles.role` is admin-writable only, and there is no self-service
 signup path to admin.** A new user gets a `driver` profile by database trigger
@@ -152,14 +152,15 @@ it is a per-endpoint dependency, so it cannot take down the demo.
 Ordered so each phase is independently testable and the riskiest thing (the
 credential boundary) is proven before anything depends on it.
 
-### A1 · Schema and RLS · `backend/data/auth_and_deliveries.sql`
+### A1 · Schema and RLS · `backend/auth/schema.sql`
 
 ```sql
 create table if not exists public.crossflow_profiles (
   id           uuid primary key references auth.users(id) on delete cascade,
   role         text not null default 'driver' check (role in ('admin','driver')),
   display_name text not null check (length(display_name) between 1 and 120),
-  created_at   timestamptz not null default now()
+  created_at   timestamptz not null default now(),
+  updated_at  timestamptz not null default now()
 );
 ```
 
@@ -181,21 +182,17 @@ Deliveries tables are **deliberately not in this phase** — they are WP9. The
 file is named for both because WP9 appends to it.
 
 **Acceptance:** applies cleanly in a fresh Supabase project, reruns without
-error, and `crossflow_auth_health()` reports `authenticated` has `select` on
-profiles and no `update` grant on `role`.
+error, and `crossflow_auth_health()` reports `schema_version`, enabled RLS,
+`authenticated_can_read=true`, and `authenticated_cannot_insert=true`. The
+role-update trigger must separately reject a driver changing `profiles.role`.
 
-### A2 · User-scoped transport · `services/supabase_user.py`
+### A2 · User-scoped transport · `backend/auth/transport.py`
 
-1. In `supabase_server.py`, extract the hardened request core — absolute
-   wall-clock budget, bounded worker slots, redirect refusal, response size cap,
-   strict JSON parse — into an internal `_execute_json(url, headers, …)`.
-   `request_json()` keeps its exact signature and behaviour; the existing tests
-   in [`test_service_architecture.py:106-175`](../backend/tests/test_service_architecture.py#L106)
-   are the regression net.
-2. `supabase_user.py` adds: `/auth/v1/…` to the allowed path set, an
-   `apikey: <publishable>` + `Authorization: Bearer <user token>` header
-   builder, and `tls.default_context()` on its opener.
-3. Access token format validation before any network call — three base64url
+The implementation keeps the user-scoped transport separate from the
+service-role-only transport. It adds `/auth/v1/…` access, an
+`apikey: <publishable>` plus `Authorization: Bearer <user token>` header, and
+the verified TLS context.
+- Access token format validation before any network call — three base64url
    segments, bounded length, no control bytes. A malformed token must never
    reach an outbound header.
 
@@ -203,7 +200,7 @@ profiles and no `update` grant on `role`.
 that a crafted token containing CR/LF or a `..` path segment is rejected before
 `open` is called.
 
-### A3 · Identity and role resolution · `services/auth.py`
+### A3 · Identity and role resolution · `backend/auth/identity.py`
 
 ```python
 @dataclass(frozen=True, slots=True)
@@ -213,20 +210,20 @@ class AuthenticatedUser:
     access_token: str  # forwarded to PostgREST so RLS applies downstream
 ```
 
-- `verify_access_token(token)` → `/auth/v1/user`.
+- `authenticate(token)` verifies the token through `/auth/v1/user` and reads the
+  caller's profile through the user-scoped transport.
 - **Verification cache:** keyed by `sha256(token)`, TTL 60 s, capped size,
   successful verifications only, and never cached beyond the token's own `exp`.
   Bounds the network cost of a chatty driver UI without meaningfully extending
   a revoked token's life.
-- `resolve_role(user)` → `profiles` read **through the caller's JWT**. A user
-  with no profile row is a hard `403`, not a defaulted `driver`.
-- `require_user()` / `require_admin_user()` FastAPI dependencies. Note the
-  deliberate name: `require_admin_user` (human, Supabase) is a different
+- `_read_profile()` resolves the role **through the caller's JWT**. A user with
+  no profile row is a hard `403`, not a defaulted `driver`.
+- `require_user()` / `require_admin_user()` are the FastAPI dependencies. Note
+  the deliberate name: `require_admin_user` (human, Supabase) is a different
   function from the existing `_require_admin` (machine, shared token) and the
   two must never be merged.
-- `forbidden_or_missing()` helper returning one identical `404`-shaped response
-  for both "does not exist" and "not yours", so WP10 cannot leak journey
-  existence by accident.
+- `not_yours_error()` returns the shared non-disclosing error shape for future
+  driver-scoped lookups.
 
 **Acceptance:** role always comes from `profiles`; a token whose
 `user_metadata.role = "admin"` still resolves to `driver`.
@@ -236,7 +233,7 @@ class AuthenticatedUser:
 | Endpoint | Auth | Returns |
 |---|---|---|
 | `GET /api/auth/session` | any valid token | `{ user_id, role, display_name, expires_at }` |
-| `GET /api/auth/status` | public | `{ mode, configured, reachable }` — for the client to decide whether to show a sign-in box at all |
+| `GET /api/auth/status` | public | `{ mode, enabled, configured, project_origin, sign_in, notes }` — reports configuration, not a live reachability probe |
 
 `/api/auth/status` is what makes D4's graceful degradation visible instead of
 implicit. Both carry the existing `private, no-store` headers used by the
@@ -245,7 +242,7 @@ routing-intelligence endpoints.
 No existing endpoint changes behaviour in this phase — freight/deliveries
 endpoints get their guards in WP9.
 
-### A5 · Tests · `backend/tests/test_auth.py`
+### A5 · Tests · `backend/auth/tests/test_auth.py`
 
 Straight from the handoff's §7 list, backend-testable subset:
 
@@ -269,16 +266,16 @@ Test 6 is not in the handoff. It is the test that proves the two mechanisms
 stayed separate, which is the guardrail most likely to erode under time
 pressure.
 
-### A6 · Placeholder client · `frontend/index.html`
+### A6 · Frontend sign-in flow · `frontend/src/services/auth.ts`
 
-One file, no build step, per D6. Signs in with the Supabase JS client from a
-CDN, then calls `GET /api/auth/session` with the returned access token and
-renders `{ user_id, role, display_name }`.
+The React service signs in directly with Supabase, then calls
+`GET /api/auth/session` with the returned access token and renders
+`{ user_id, role, display_name }` through `SignInPanel`.
 
 Its real job is to be **the executable form of the D2 contract** — it shows the
-next person exactly where the password goes (Supabase, not us) and exactly what
-the backend expects (a Bearer token). Two buttons, a role readout, and an error
-line. Nothing more; the real admin and driver views are WP9/WP10 work.
+user exactly where the password goes (Supabase, not us) and exactly what the
+backend expects (a Bearer token). It also handles refresh, GitHub OAuth, guest
+continuation, project mismatch, and graceful auth outages.
 
 The publishable key is embedded in the page, which is correct and intended —
 that key is designed to be public and is useless without a user session and the
@@ -286,19 +283,18 @@ RLS policies from A1.
 
 ### A7 · Configuration and documentation
 
-- `.env.example` — add `SUPABASE_PUBLISHABLE_KEY`, `CROSSFLOW_AUTH_MODE`, each
-  with the file's existing explanatory comment style and an explicit "never put
-  the secret key here" warning.
-- `README.md` — a short auth section: the three-credential table from §2, how
-  to apply the SQL, and the client contract from D2.
-- CI needs no change — `unittest discover` picks up `test_auth.py` automatically.
+- `.env.example` and the README document the server credentials and auth mode;
+  frontend builds use `VITE_SUPABASE_URL` and
+  `VITE_SUPABASE_PUBLISHABLE_KEY`.
+- CI runs the backend auth boundary suite explicitly and the frontend auth tests
+  as part of the normal Vitest run.
 
 ---
 
 ## 6. Suggested order of work
 
 ```
-A1 schema ──▶ A2 transport ──▶ A3 auth.py ──▶ A4 endpoints ──┬─▶ A6 client ──▶ A7 docs
+A1 schema ──▶ A2 transport ──▶ A3 identity.py ──▶ A4 endpoints ──┬─▶ A6 client ──▶ A7 docs
                     └──────────▶ A5 tests ◀──────────┘       │
                                                               └─▶ live check against the real project (D5)
 ```
@@ -327,9 +323,8 @@ proof lives here.
 
 - **Deliveries, stops, journey events** (WP9) and the **driver view** (WP10).
   This roadmap builds the boundary they sit behind and nothing more.
-- **The real frontend** — admin scheduling and driver views. A6 ships a
-  deliberately disposable login page only; the React workspace that replaces it
-  is WP9/WP10 work.
+- **Delivery-specific admin scheduling and driver workflows** beyond the current
+  sign-in/session boundary.
 - **Freight routing** (WP1–WP7) — the other track entirely.
 - Password reset, email confirmation, MFA — Supabase Auth features, configured
   in its console, not code we write.
@@ -338,7 +333,8 @@ proof lives here.
 
 ## 10. Turning it on
 
-Nothing below is done yet; it is the A1 acceptance gate.
+The code path is implemented. The remaining acceptance gate is applying the
+schema to a real Supabase project and proving RLS and end-to-end sign-in there.
 
 1. **Apply the schema.** Paste `backend/auth/schema.sql` into the Supabase SQL
    Editor and run it. It is rerunnable.
@@ -357,17 +353,21 @@ Nothing below is done yet; it is the A1 acceptance gate.
    ```
    Run it in the SQL Editor, which connects as `postgres` — the role guard
    trigger rejects the same statement from a driver session, which is the point.
-4. **Check it end to end.** Open `frontend/index.html`, enter the project URL,
-   publishable key and `http://localhost:8000`, then sign in as each user.
+4. **Check it end to end.** Put `VITE_SUPABASE_URL` and
+   `VITE_SUPABASE_PUBLISHABLE_KEY` in `frontend/.env.local`, start the stack with
+   `scripts/dev.sh`, and open `http://localhost:3000`.
    `/api/auth/session` should report the role that came from the database, and
    `/api/auth/admin-check` should return 200 for the admin and 403 for the
    driver.
 
-**The check that matters most.** Signed in as the driver, run this in the
-browser console on the page:
+**The check that matters most.** Signed in as the driver, open the legacy
+standalone diagnostic page [`docs/auth-signin-demo.html`](auth-signin-demo.html)
+and run this in its browser console. The React dashboard intentionally does not
+expose the Supabase client globally.
 
 ```js
-const { data, error } = await supabase.from('crossflow_profiles').select('*');
+const { data, error } = await window.crossflow.supabase
+  .from('crossflow_profiles').select('*');
 ```
 
 It must return **exactly one row** — their own. More than one row means the
@@ -375,7 +375,7 @@ policies are not doing their job, and no amount of correct-looking API code
 compensates for that. Then try promoting themselves:
 
 ```js
-await supabase.from('crossflow_profiles')
+await window.crossflow.supabase.from('crossflow_profiles')
   .update({ role: 'admin' }).eq('id', '<their own id>');
 ```
 

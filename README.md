@@ -25,8 +25,6 @@ observation.
    - Source-dated operator timetable snapshots cover published Batam-Singapore sailings, alongside official BP Batam terminal reference information. Passenger-queue and processing values are **schedule-informed planning estimates** derived from departure density and a Batam time-of-day profile. They are always marked non-observed because no documented public live Batam terminal queue API is connected. The UI retains the operator or terminal link and asks travellers to verify and book before departure.
 5. **Operations & Carbon Analytics Dashboard**
    - Bottleneck detection and dispatch alerts grounded in modelled corridor state, plus a modelled avoidable-emissions opportunity with published illustrative assumptions. These are scenario outputs, not observed or measured operational performance.
-6. **Built-in Stage Pitch Deck**
-   - Interactive 2-slide presentation mode built into the header for live demonstration.
 
 ---
 
@@ -94,7 +92,7 @@ grant redistribution rights.
 - **Batam traffic:** [Dishub Batam traffic cameras](https://dishub.batam.go.id/cctv-lalu-lintas-kota-batam/), the [2024 Dishub performance report](https://dishub.batam.go.id/wp-content/uploads/sites/3/2025/02/DISHUB_LAKIP_2024.pdf) and the [2021–2026 strategic plan](https://dishub.batam.go.id/wp-content/uploads/sites/3/2025/02/DISHUB_RENSTRA2021-2026.pdf). The 2024 report records the official ATCS/intersection inventory; it does not publish current congestion labels. The camera page has no documented public machine API, so a camera can be called current only after a successful timestamped fetch.
 - **Batam open data:** [Satu Data Kota Batam](https://satudata.batam.go.id/data/) publishes downloadable civic datasets, and [BP Batam Open Data](https://data.bpbatam.go.id/dataset/?groups=transportasi) publishes agency datasets. The available road and infrastructure series are useful context, not a live segment-speed feed.
 - **Ferry terminals and port totals:** [BP Batam passenger ports](https://batamport.bpbatam.go.id/pelabuhan-penumpang/) and its official pages for [Batam Centre](https://batamport.bpbatam.go.id/batam-centre/), [Sekupang](https://batamport.bpbatam.go.id/sekupang/), [Harbour Bay](https://batamport.bpbatam.go.id/harbour-bay/) and [Nongsapura](https://batamport.bpbatam.go.id/nongsapura/) provide terminal identity, facilities, routes and published aggregates. [B-SIMS](https://b-sims.bpbatam.go.id/) is an account-based port-service system for authorized users, not a public passenger-status API.
-- **Ferry schedules:** “Check Schedules” validates six reviewed official pages: recurring operator timetables from [BatamFast](https://www.batamfast.com/tripschedule/index.ashx), [Sindo Ferry](https://www.sindoferry.com.sg/), [Majestic Fast Ferry](https://www.majesticfastferry.com.sg/) and [Horizon Fast Ferry](https://horizonfastferry.com.sg/), the [BP Batam passenger-terminal catalogue](https://batamport.bpbatam.go.id/pelabuhan-penumpang/), and the date-bound [Singapore Cruise Centre ferry board](https://singaporecruise.com.sg/schedule/ferries/). BP Batam supplies terminal context rather than departure slots. SCC rows are validated as same-day operations and never overwrite recurring operator timetables. Deployments remain responsible for the SCC site's stated linking/reuse terms.
+- **Ferry schedules:** “Check Schedules” validates six reviewed official pages: recurring operator timetables from [BatamFast](https://www.batamfast.com/tripschedule/index.ashx), [Sindo Ferry](https://app.sindoferry.com.sg/schedule/), [Majestic Fast Ferry](https://www.majesticfastferry.com.sg/) and [Horizon Fast Ferry](https://horizonfastferry.com.sg/), the [BP Batam passenger-terminal catalogue](https://batamport.bpbatam.go.id/pelabuhan-penumpang/), and the date-bound [Singapore Cruise Centre ferry board](https://singaporecruise.com.sg/schedule/ferries/). BP Batam supplies terminal context rather than departure slots. SCC rows are validated as same-day operations and never overwrite recurring operator timetables. Deployments remain responsible for the SCC site's stated linking/reuse terms.
 - **Passenger processing:** the [Singapore Cruise Centre departure guide](https://singaporecruise.com.sg/departure-arrival/ferry/) publishes check-in and gate windows, while [Singapore ICA checkpoint information](https://www.ica.gov.sg/about-us/our-checkpoints) describes the official checkpoints. Neither source publishes a Batam-terminal live wait-time API.
 - **Singapore road data:** [SLA OneMap](https://www.onemap.gov.sg/apidocs/) supports authoritative Singapore search and routing, and [LTA DataMall](https://datamall.lta.gov.sg/content/datamall/en/dynamic-data.html) offers key-gated traffic speed bands, incidents and images. These are integration options rather than evidence that the current browser fallback is live; OneMap routing also does not extend into Batam.
 - **Maritime logistics:** [MPA OCEANS-X](https://oceans-x.mpa.gov.sg/) and the [Singapore Maritime Data Hub vessel-arrivals API](https://sg-mdh.mpa.gov.sg/vessel-arrivals/apis) provide subscribed maritime data. They can enrich cargo and vessel planning, but they do not provide Batam passenger queue minutes.
@@ -179,10 +177,12 @@ The separation is structural rather than conventional:
 [`backend/auth/transport.py`](backend/auth/transport.py) never reads a secret
 key from the environment, and a test asserts that it cannot. Apply
 [`backend/auth/schema.sql`](backend/auth/schema.sql) and set
-`CROSSFLOW_AUTH_MODE=supabase` to enable sign-in; until then every public
-corridor, ferry and model endpoint keeps serving unauthenticated, and only the
-`/api/auth/*` routes report that sign-in is unavailable. Auth is a per-route
-dependency, never middleware, so an unreachable Supabase cannot blank the app.
+`CROSSFLOW_AUTH_MODE=supabase` enables the server-side auth routes; the browser
+also needs matching `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY`.
+Until the server mode is enabled, every public corridor, ferry and model
+endpoint keeps serving unauthenticated, and only the `/api/auth/*` routes report
+that sign-in is unavailable. Auth is a per-route dependency, never middleware,
+so an unreachable Supabase cannot blank the app.
 See [Auth Backend Roadmap](docs/AUTH_BACKEND_ROADMAP.md).
 
 ---
@@ -221,6 +221,10 @@ See [Auth Backend Roadmap](docs/AUTH_BACKEND_ROADMAP.md).
 ### Prerequisites
 - Node.js v20.19+ (or v22.12+)
 - Python 3.12+
+
+The launcher and CI test Python 3.12+, while the pre-existing optional
+`pyproject.toml` metadata currently declares `>=3.14`; align that packaging
+metadata before building a distributable package.
 
 ### One command
 
@@ -377,7 +381,13 @@ pip install -r backend/requirements.txt
 python backend/main.py
 ```
 
-### 3. Run the same verification as CI
+### 3. Run the primary local verification
+
+The commands below mirror the frontend and backend checks in GitHub Actions.
+The backend function-style tests require the CI-only `pytest` package, so install
+it into the virtual environment if it is not already present. The commands use
+POSIX paths; on Windows, use the equivalent `.venv\\Scripts\\python.exe` paths
+from PowerShell, or run them under WSL/Git Bash.
 
 ```bash
 # Frontend typecheck/build, lint, and regression tests
@@ -388,7 +398,13 @@ npm run build
 cd ..
 
 # Backend regression checks and launcher validation
+.venv/bin/python -m compileall -q backend scripts
 .venv/bin/python backend/test_backend.py
+.venv/bin/python -m unittest discover -s backend/tests -p 'test_*.py'
+# Once, if needed, install the CI-only function-test runner
+.venv/bin/pip install pytest
+(cd backend && ../.venv/bin/python -m pytest tests -q)
+.venv/bin/python -m unittest discover -s backend/auth/tests -t . -p 'test_*.py'
 bash -n scripts/dev.sh
 ```
 
@@ -413,7 +429,10 @@ secrets are configured. Set only the integrations you use:
 | Variable | Purpose |
 |---|---|
 | `VITE_API_BASE_URL` | API origin for a split frontend/backend deployment; local Vite and the bundled Vercel config use same-origin `/api` by default. |
+| `VITE_SUPABASE_URL` | Supabase project URL used by the React sign-in flow. It must identify the same project as the server-side `SUPABASE_URL`. |
+| `VITE_SUPABASE_PUBLISHABLE_KEY` (or legacy `VITE_SUPABASE_ANON_KEY`) | Browser-safe Supabase key for direct sign-in and token refresh. Never put `SUPABASE_SECRET_KEY` or `SUPABASE_SERVICE_ROLE_KEY` in a `VITE_` variable. |
 | `VITE_ENABLE_GOOGLE_BENCHMARK` | Must equal `true` to show the optional text-only “Compare online” action. This is a UI gate, never an API key; the server gate and dedicated server key below are also required. |
+| `CROSSFLOW_AUTH_MODE` | `disabled` by default locally; set to `supabase` after applying `backend/auth/schema.sql` to enable the per-route auth checks. Vercel pins this to `supabase`. |
 | `TOMTOM_API_KEY` | Optional TomTom flow-segment layer used by `/api/live-traffic`. |
 | `SUPABASE_URL` + `SUPABASE_SECRET_KEY` (or legacy `SUPABASE_SERVICE_ROLE_KEY`) | Server-only Supabase credentials. Apply `backend/data/ferry_freshness.sql` for shared ferry verification, and optionally `backend/data/routing_intelligence.sql` for durable typed traffic observations and shortcut review/approval records. Ferry freshness fails closed in production when required durability is unavailable; routing intelligence remains optional and must report its actual storage boundary. Never expose the secret/service-role key. Official `*.supabase.co` hosts are accepted; set `CROSSFLOW_SUPABASE_ALLOWED_HOST` only for an audited self-hosted HTTPS origin. |
 | `CROSSFLOW_REQUIRE_DURABLE_FERRY_FRESHNESS` | Durability gate. `vercel.json` pins it to `1` for Preview and Production so shared freshness cannot silently degrade to process memory. Use `0` only for local committed-snapshot fallback. |
@@ -424,6 +443,9 @@ secrets are configured. Set only the integrations you use:
 | `CROSSFLOW_SHORTCUT_REVIEWER_ID` | Server-owned reviewer identity recorded on immutable shortcut approvals. The request body cannot spoof this audit field. |
 | `CROSSFLOW_SHORTCUT_SOURCE_POLICY` | Server-owned JSON allowlist of exact pinned HTTPS sources, MIME types, confidence ceilings, and resource limits. Blank disables source fetching. Parsed tips always enter `REVIEW_REQUIRED`; this variable cannot enable activation. |
 | `CROSSFLOW_ROUTE_PROVIDER` | `local` by default. The legacy `supabase` value fails fast because its RPC cannot prove vehicle constraints. Only `supabase_v2_constrained` may be enabled after a replacement RPC returns the complete constraint, navigation and alternative-route contract; all failures retain the local OSM route. |
+| `CROSSFLOW_ALTERNATIVE_MAX_SEARCHES` | Optional upper bound for synchronous alternative-route A* attempts; default `3`. |
+| `CROSSFLOW_ALTERNATIVE_TIME_BUDGET_MS` | Optional wall-clock budget for alternative-route search; default `10000` ms. |
+| `CROSSFLOW_ALTERNATIVE_MAX_SETTLED_STATES` | Optional settled-state cap for alternative-route search; default `250000`. |
 | `CROSSFLOW_ROUTE_LEARNING_DB` | Writable SQLite path for verified traversal observations. A configured persistent volume is durable; serverless `/tmp` is explicitly reported as ephemeral. |
 | `CROSSFLOW_ADMIN_TOKEN` | Server-only token for protected ingestion, review/promotion, persistence status and retraining operations through the `X-CrossFlow-Admin-Token` header. An unset token denies access; do not reuse a Supabase credential. |
 | `CROSSFLOW_ROUTE_DB` | SQLite path for persisted, content-addressed route responses. Configure a durable volume when drivers must retrieve routes across restarts. |
@@ -431,6 +453,12 @@ secrets are configured. Set only the integrations you use:
 | `CROSSFLOW_ENABLE_GOOGLE_BENCHMARK` | Must equal `true` to expose the optional, text-only `/api/route-benchmark` comparison. Disabled by default. |
 | `CROSSFLOW_GOOGLE_ROUTES_API_KEY` | Dedicated server-only Google Routes v2 key for the opt-in benchmark. Browser-prefixed and legacy Google keys are never read. |
 | `SUPABASE_DB_URL` | Optional PostgreSQL URL used only by ingestion/training scripts. Never expose it to the frontend. |
+
+When using `scripts/dev.sh`, non-empty server variables are read from a root
+`.env` file (or an already-exported shell variable). Vite browser variables
+must be placed in `frontend/.env.local` or configured in the frontend deploy
+environment; restart Vite after changing them. Keep the browser publishable key
+and the server `SUPABASE_URL` pointed at the same Supabase project.
 
 ### 5. Optional training tooling
 
@@ -487,4 +515,4 @@ border requirements.
 - **Technical Execution & Engineering Quality**: TypeScript React frontend + FastAPI service, stateful vehicle- and preference-aware A\* over a committed Batam OSM graph, per-leg SG–ferry–Batam journey composition, and a browser fallback that preserves source and limitation labels when online routing is unavailable.
 - **Innovation & Creativity**: Cross-modal departure planning couples road access with a matching published ferry window while keeping schedule evidence distinct from live operating status.
 - **Impact & Feasibility**: Models roughly **540 kg CO2 per day** of avoidable idle emissions across five corridors, under assumptions published in the API response (40 advised trips/corridor/hour, 35% of queue delay avoidable, 1.8 kg/h idle burn). These are modelled projections from a simulated traffic layer, not measured outcomes.
-- **Presentation & Demo**: Interactive stage pitch deck, responsive light-theme UI, and honest data-provenance labelling throughout.
+- **Presentation & Demo**: Responsive light-theme UI and honest data-provenance labelling throughout; the stage pitch remains documented as an outline in [`docs/PITCH_DECK_OUTLINE.md`](docs/PITCH_DECK_OUTLINE.md).

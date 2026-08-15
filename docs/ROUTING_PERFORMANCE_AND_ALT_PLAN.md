@@ -21,6 +21,14 @@ artifacts/runtime fallback, primary-search reuse, and bounded synchronous
 alternative search are implemented. Asynchronous delivery and learned
 guidance remain follow-up work.
 
+The delivery sections below are retained as the implementation record. Delivery
+0 through Delivery 4.2 are implemented in the current workspace; Delivery 5
+and the optional two-stage alternatives API remain future work.
+
+Imperative wording inside a completed delivery records its original acceptance
+criteria; use the status note at each delivery as the current implementation
+state.
+
 The user-supplied local measurements are the initial reference points, not CI
 assertions:
 
@@ -56,6 +64,10 @@ Every delivery slice must preserve these properties:
    it.
 
 ## Delivery 0: repeatable baseline and search diagnostics
+
+**Status: implemented.** `scripts/benchmark_router.py` provides reproducible
+baseline cases, and router diagnostics are opt-in and excluded from route
+payloads and cache identity.
 
 Add `scripts/benchmark_router.py` as a deterministic local benchmark. It should
 run primary-only and primary-plus-alternatives cases separately and emit both a
@@ -93,6 +105,9 @@ Acceptance:
   reports zero new searches for a warm result-cache hit.
 
 ## Delivery 1: canonical cache key and reusable vehicle routing view
+
+**Status: implemented.** The routing-view and cache identity now normalize
+vehicle and override inputs before the cached builders are invoked.
 
 ### 1.1 Canonicalize the core cache
 
@@ -142,6 +157,9 @@ Acceptance:
 
 ## Delivery 2: precompute static edge and turn inputs
 
+**Status: implemented.** Static edge eligibility and turn inputs are prepared
+by the current router and covered by the routing regression tests.
+
 Add an immutable per-vehicle `StaticEdgeFeatures` record to each routing view.
 Precompute values that do not depend on the request:
 
@@ -173,6 +191,9 @@ Acceptance:
   counters and profile.
 
 ## Delivery 3: directed ALT landmark index
+
+**Status: implemented.** Versioned ALT artifacts load when valid and fall back to
+the admissible haversine heuristic when unavailable or stale.
 
 ### 3.1 Offline artifact
 
@@ -253,10 +274,9 @@ Acceptance:
 
 ### 4.1 Split primary computation from presentation
 
-The current result cache includes `include_alternatives`, so requesting the
-same selected route again with alternatives repeats primary work. Introduce an
-internal immutable `RouteComputation` containing the exact `PathResult`, query
-context, and primary payload. Layer caches as:
+**Status: implemented.** The outer presentation cache still distinguishes
+`include_alternatives`, but primary path computation is reused through the
+separate `_primary_paths_cached()` layer. The current cache layers are:
 
 ```text
 normalized route query -> primary RouteComputation
@@ -267,9 +287,9 @@ presentation metadata -> deep-copied API payload
 Names and other presentation-only fields should not force a graph search cache
 miss. Keep the public dictionary response copy-safe.
 
-Update both `optimize_route` and `optimize_free_route` to retain `route_now` and
-`route_later` computations, select one, and attach alternatives to that exact
-selected primary. Do not invoke a third primary A* search.
+The route solvers retain `route_now` and `route_later` computations, select one,
+and attach alternatives to that exact selected primary without invoking a third
+primary A* search.
 
 Acceptance:
 
@@ -357,7 +377,10 @@ Acceptance for enabling any learned guidance:
 - automatic fallback to plain ALT on low confidence, invalid output, model
   error, or revision mismatch.
 
-## Pull-request sequence
+## Historical pull-request sequence
+
+The sequence below records the intended rollout order; it is not a list of
+unstarted work for Deliveries 0–4.2.
 
 Keep the rollout reviewable and reversible:
 

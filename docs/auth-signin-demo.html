@@ -5,14 +5,16 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>CrossFlow AI — sign in</title>
 <!--
-  Deliberately disposable placeholder (roadmap decision D6).
+  Legacy standalone diagnostic page. The production sign-in flow now lives in
+  frontend/src/services/auth.ts and frontend/src/components/auth/SignInPanel.tsx.
 
   It exists to prove one thing end to end: the password goes to Supabase, never
   to the CrossFlow API, and the API answers with a role it resolved from the
   database rather than one the client claimed.
 
-  No build step, no package.json, nothing for CI to run. The real admin and
-  driver views are WP9/WP10 work and will replace this entirely.
+  This page remains useful for testing the backend boundary without the React
+  build, but it is not the product UI. Use http://localhost:3000 for the normal
+  dashboard sign-in flow.
 
   Open it directly in a browser (file://) or serve the folder statically. The
   API allows any origin and uses no cookies, so both work.

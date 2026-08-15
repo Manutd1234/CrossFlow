@@ -8,7 +8,7 @@
 
 | | |
 |---|---|
-| **Branch** | `feat/auth-backend` (branched from `main`; `main` untouched) |
+| **Branch** | Historical implementation branch; verify the current checkout before applying any branch-specific guidance |
 | **Scope done** | Backend auth: schema, transport, identity, endpoints, tests |
 | **Scope not done** | Live connection, RLS verification, deliveries (WP9), driver view (WP10) |
 | **Time to connect** | ~15 minutes if the project already exists |
@@ -27,10 +27,13 @@ Everything auth-related lives in [`backend/auth/`](../backend/auth/).
 | [`routes.py`](../backend/auth/routes.py) | `GET /api/auth/status` (public), `/api/auth/session`, `/api/auth/admin-check`. |
 | [`tests/test_auth.py`](../backend/auth/tests/test_auth.py) | 25 boundary tests, all passing. |
 
-Also: [`frontend/index.html`](../frontend/index.html) is a throwaway login page with
-no build step, used to exercise the flow by hand. Two lines were added to
-[`backend/main.py`](../backend/main.py) to mount the router, plus entries in
-`.env.example`, a README section, and a CI step.
+The production frontend now contains the sign-in flow in
+[`frontend/src/services/auth.ts`](../frontend/src/services/auth.ts) and
+[`frontend/src/components/auth/SignInPanel.tsx`](../frontend/src/components/auth/SignInPanel.tsx).
+[`frontend/index.html`](../frontend/index.html) is the Vite application shell,
+not a standalone login page. The backend router is mounted from
+[`backend/main.py`](../backend/main.py), with configuration in `.env.example`
+and a dedicated auth test job in CI.
 
 **How sign-in works.** The client talks to Supabase Auth **directly** and sends
 us the resulting access token. This API never receives a password, so there is
@@ -97,9 +100,11 @@ What it creates, and why each piece exists:
 
 ## 4. Configure and run the backend
 
-**The repo does not load `.env`.** There is no `python-dotenv` and `dev.sh` does
-not source it — `.env.example` is documentation only. Set real environment
-variables in the same shell that starts the server.
+`scripts/dev.sh` parses non-empty `KEY=VALUE` entries from the root `.env` and
+does not execute the file as shell code. Direct `uvicorn` launches still need
+the variables exported in the same shell that starts the server. The Vite
+frontend has its own `frontend/.env.local` for `VITE_SUPABASE_URL` and
+`VITE_SUPABASE_PUBLISHABLE_KEY`.
 
 PowerShell, from the repo root:
 
@@ -153,9 +158,9 @@ Note that this statement works because the SQL Editor connects as `postgres`.
 The same statement from a driver session is rejected by the role-guard trigger,
 which is the whole point.
 
-**Checkpoint.** Open [`frontend/index.html`](../frontend/index.html) in a browser
-(double-click; `file://` works, the API allows any origin and uses no cookies).
-Enter the project URL, publishable key and `http://localhost:8000`, then:
+**Checkpoint.** Start the normal development stack with `scripts/dev.sh`, after
+putting `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` in
+`frontend/.env.local`. Open <http://localhost:3000>, then:
 
 | Signed in as | `/api/auth/session` | `/api/auth/admin-check` |
 |---|---|---|
@@ -171,6 +176,11 @@ would return the same answers either way. These two read the database directly
 as the signed-in user, which is the only way to prove the policies work.
 
 Sign in as the **driver**, open the browser console (F12) on that page:
+
+For these direct RLS checks, use the legacy standalone diagnostic page
+[`docs/auth-signin-demo.html`](auth-signin-demo.html), which intentionally
+exposes `window.crossflow.supabase`. The production React dashboard keeps its
+Supabase client private and does not expose that global.
 
 **Check 1 — can a driver see other people?**
 
@@ -216,31 +226,16 @@ driver, and you will not find out from the UI.
 
 ## 8. Open items you are inheriting
 
-**Windows cannot run this repo without `tzdata`.**
-[`services/multimodal_router.py:35`](../backend/services/multimodal_router.py#L35)
-calls `ZoneInfo("Asia/Jakarta")`, but Windows ships no system timezone database
-and `tzdata` is not in `backend/requirements.txt`. Importing `main.py` fails
-outright. It works in CI because Linux has the system database. It is installed
-in the local `.venv` as a workaround; the proper fix is one line in
-`backend/requirements.txt`, deliberately not made here because it affects the
-Vercel deploy:
+**Timezone data is now an explicit production dependency.**
+[`backend/requirements.txt`](../backend/requirements.txt) pins `tzdata` for all
+platforms because `ZoneInfo("Asia/Jakarta")` must also work on Windows and slim
+Linux images. The old Windows-only workaround is no longer needed.
 
-```
-tzdata; platform_system == "Windows"
-```
-
-**Two Windows-only test failures — diagnosed and fixed on this branch.**
-`backend/test_backend.py` used to report 144/146 on Windows while CI reported a
-clean suite. The cause was in the tests, not the product: both opened a database
-with `with sqlite3.connect(path) as conn`, and sqlite3's context manager commits
-the transaction but **does not close the connection**. Windows then refuses to
-delete the still-open file, so `TemporaryDirectory` cleanup raised
-`PermissionError` and the tests were recorded as failed — after their assertions
-had already passed. Fixed with `contextlib.closing` in the second commit on this
-branch. Worth knowing because the same pattern is easy to reintroduce.
-
-Note the suite takes ~40 minutes and buffers all output until the end, so a run
-that appears hung is usually just working.
+**Historical test note.** Earlier Windows runs exposed SQLite cleanup failures
+when tests used a connection context manager without closing the connection.
+That test-only issue was fixed with `contextlib.closing`; use the current CI
+workflow and verification commands below as the source of truth for present
+runtime and duration.
 
 **`transport.py` duplicates ~90 lines** of hardened request logic from
 `services/supabase_server.py` (timeout controller, redirect refusal, response
@@ -264,8 +259,9 @@ freight pivot handoff:
   cannot discover which journey IDs exist by probing.
 
 Full plan: [`docs/AUTH_BACKEND_ROADMAP.md`](AUTH_BACKEND_ROADMAP.md) §10 for the
-connection steps in more detail, and `FREIGHT_PIVOT_HANDOFF.md` §WP9–WP11 for
-what the delivery tables need to support.
+connection steps in more detail. Delivery-specific persistence and driver
+workflow work is outside the current auth boundary and should be documented in
+its own current handoff when that work begins.
 
 ---
 
@@ -278,15 +274,16 @@ what the delivery tables need to support.
 # Existing modular tests (~4 min)
 .venv\Scripts\python.exe -m unittest discover -s backend/tests -t . -p "test_*.py"
 
-# Full backend suite (~40 min, buffers output until the end)
+# Full backend regression runner
 .venv\Scripts\python.exe backend\test_backend.py
 ```
 
-Current state on this branch: 25/25 auth, 105/105 modular. The two previously
-failing history tests now pass individually on Windows; see §8.
+The recorded offline state is 25/25 auth and 105/105 modular tests. Re-run the
+commands above after changing the checkout; this document is not a substitute
+for current test output.
 
 ---
 
-*Written 15 August 2026. The auth code has been verified offline and against a
-deliberately unreachable project; it has never been run against a real Supabase
-instance. §6 is the first time that happens.*
+*This handoff describes the offline implementation and the remaining live
+Supabase verification. The recorded test counts and branch notes are historical
+and should be refreshed when the integration is connected.*

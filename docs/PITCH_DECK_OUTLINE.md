@@ -1,5 +1,9 @@
 # 🎤 CrossFlow AI — Stage Pitch Deck & 3-Minute Demo Script
 
+> This file is a presentation outline and demo script. The current React app
+> does not include a built-in pitch-deck mode; use the dashboard alongside this
+> outline for the live presentation.
+
 > **Batam-Singapore Hackathon 2026**  
 > **Track 2: Ease of Living & Sustainability — Smart Mobility Flow**
 
@@ -25,8 +29,9 @@
   burn fuel while they wait. Existing tools treat road traffic and ferry
   timetables as separate problems."
 * **If asked where the roads come from**: OpenStreetMap, 115,320 union-retention nodes, routed
-  with A\* and a haversine heuristic — admissible, so the paths are provably
-  the shortest, not approximations.
+  with a turn-aware A\* search and a haversine lower bound. The selected route
+  is exact for its nonnegative objective; `SHORTEST` minimizes physical distance
+  while the other preferences optimize their published weighted objectives.
 
 ### 0:45 – 1:45: The Departure Window Solver
 * **Visual**: **Smart Route & Departure Solver**. Select the Mukakuning corridor
@@ -44,21 +49,24 @@
 * **Visual**: **Ferry & Port Intelligence**, then **Operations & Carbon Analytics**.
 * **Script**: "For port and city operators this is one pane of glass. Sailings
   always look forward from right now across Batam Centre, Sekupang and
-  HarbourBay. Dispatch alerts are generated from live corridor state, so an
-  alert can never name a bottleneck the counter says doesn't exist. And the
+  HarbourBay. Dispatch alerts are generated from modelled corridor state; an
+  optional server-side TomTom adapter can add a labelled live traffic
+  observation when configured. And the
   carbon figure is accrued through the day from modelled queue delay — with the
   assumptions published in the API response, not baked into a slide."
 * **Honesty beat, say it before you're asked**: "Road geometry and routing are
-  real OpenStreetMap data. The traffic layer is simulated — there is no public
-  Batam traffic feed, and no ferry operator here publishes an API. The header
-  badge says so, and swapping in a live feed touches exactly one module."
+  real OpenStreetMap data. The default traffic layer is simulated — there is no
+  documented public Batam segment-speed feed. When configured, the server-side
+  TomTom adapter can provide labelled point-flow observations; ferry schedules
+  remain published snapshots rather than live operator status."
 
 ### 2:30 – 3:00: Stage Pitch & Summary
-* **Visual**: **Stage Pitch Deck** button in the header.
+* **Visual**: the dashboard alongside this outline; there is no built-in pitch
+  deck button in the current React app.
 * **Script**: "CrossFlow AI is built specifically for the Batam-Singapore
-  corridor — real road network, real pathfinding, an honest simulation layer
-  ready to be replaced by live telemetry, and a clear line between the two.
-  Thank you."
+  corridor — real road network, real pathfinding, an honest default simulation
+  layer, an optional labelled live-traffic adapter, and a clear line between
+  the two. Thank you."
 
 ---
 
@@ -73,9 +81,10 @@
 
 ### Slide 2: Architecture & Regional Impact
 - **Road Network**: 115,320-node schema-v3 OpenStreetMap graph of Batam, routed with a
-  hand-implemented A\* and an admissible haversine heuristic.
+  hand-implemented, turn-aware A\* and an admissible haversine lower bound.
 - **Forecasting**: scikit-learn Random Forest predicting 30/60-minute corridor
-  congestion, trained on a synthetic Batam traffic profile pending a live feed.
+  congestion, trained on a synthetic Batam traffic profile by default, with an
+  optional server-side TomTom point-flow adapter when configured.
   *(Not XGBoost — earlier drafts of this deck said so in error.)*
 - **Route Engine**: Vehicle-aware departure window solver (Car, Freight Truck,
   Express Van) with customs buffers and ferry boarding cutoffs.
@@ -92,8 +101,8 @@
 ## 🛡️ Likely Judge Questions
 
 **"Is this real data?"**
-Road network and routing: yes, OpenStreetMap. Traffic: no, simulated — and the
-UI says so. There is no documented municipal training feed; the optional
+Road network and routing: yes, OpenStreetMap. The default forecast is simulated
+and the UI says so. There is no documented municipal training feed; the optional
 commercial TomTom point-flow adapter is labelled live only after a successful request.
 
 **"What's the model's accuracy?"**
@@ -102,10 +111,13 @@ against that generator would just measure the formula against itself. We'd need
 real corridor telemetry to make an accuracy claim worth anything.
 
 **"Why implement A\* instead of using a routing library?"**
-It's about fifty lines and we control the heuristic. Using great-circle distance
-keeps it admissible, which is what makes the result optimal rather than merely
-plausible.
+The direct implementation keeps vehicle constraints, turn state, route
+preferences, alternatives, caching, and provenance under one contract. The
+great-circle lower bound is admissible, while exactness is defined against the
+selected objective rather than a universal notion of shortest.
 
 **"How hard is it to go live?"**
-Two modules: `simulator.py` for corridor telemetry, `ferry_schedule.py` for
-sailings. Everything downstream consumes the same shapes.
+The default demo path is synthetic, but the backend already has a server-side
+TomTom point-flow adapter behind `TOMTOM_API_KEY`. Any additional source still
+has to preserve the same provenance and freshness contracts; ferry data remains
+source-dated published schedule information.
