@@ -5,8 +5,8 @@
 
 CrossFlow AI is a smart-mobility and cross-border logistics planning platform
 for the **Batam-Singapore Corridor**. It combines road routing, planning-grade
-congestion forecasts and published ferry schedules in a door-to-door journey
-view. The product distinguishes official reference data, optional observations
+congestion forecasts and published ferry schedules into a door-to-door journey
+API. The product distinguishes official reference data, optional observations
 and modelled estimates; it does not present a timetable, queue estimate or
 forecast as live unless a connected source actually supplies a fresh
 observation.
@@ -22,11 +22,11 @@ observation.
 3. **Singapore ↔ Batam Door-to-Door Journey Solver**
    - Free-text or map-picked endpoints can be anywhere in the supported Singapore and Batam bounds. A cross-border plan is composed as **Singapore road access → published ferry terminal corridor → Batam road access**, or the reverse. Candidate crossings are restricted to published terminal pairs through HarbourFront or Tanah Merah and Batam Centre, Harbour Bay, Sekupang or Nongsa Pura; the solver does not invent informal small-channel crossings. Every leg carries its own provider, geometry and limitation. Ferry lines are channel-aware planning geometry, not an observed vessel track, while the selected departure is asserted only when the bundled operator snapshot contains a matching sailing. Same-island Batam journeys retain the full local A\* objectives and alternatives.
 4. **Ferry & Port Intelligence**
-   - Source-dated operator timetable snapshots cover published Batam-Singapore sailings, alongside official BP Batam terminal reference information. Passenger-queue and processing values are **schedule-informed planning estimates** derived from departure density and a Batam time-of-day profile. They are always marked non-observed because no documented public live Batam terminal queue API is connected. The UI retains the operator or terminal link and asks travellers to verify and book before departure.
-5. **Operations & Carbon Analytics Dashboard**
-   - Bottleneck detection and dispatch alerts grounded in modelled corridor state, plus a modelled avoidable-emissions opportunity with published illustrative assumptions. These are scenario outputs, not observed or measured operational performance.
-6. **Built-in Stage Pitch Deck**
-   - Interactive 2-slide presentation mode built into the header for live demonstration.
+   - Source-dated operator timetable snapshots cover published Batam-Singapore sailings, alongside official BP Batam terminal reference information. Passenger-queue and processing values are **schedule-informed planning estimates** derived from departure density and a Batam time-of-day profile. They are always marked non-observed because no documented public live Batam terminal queue API is connected. Responses retain the operator or terminal link so travellers can verify and book before departure.
+5. **Operations & Carbon Analytics**
+   - `/api/operations-summary` returns bottleneck detection and dispatch alerts grounded in modelled corridor state, plus a modelled avoidable-emissions opportunity with published illustrative assumptions. These are scenario outputs, not observed or measured operational performance.
+6. **Multi-Destination Journey Scheduling**
+   - `POST /api/optimize-multi-stop-route` chains 3–8 ordered stops into one schedule. Each leg is solved by the same engines as a two-point route and departs when the previous leg arrives plus that stop's dwell. Optional stop-order optimisation pins both endpoints, orders by straight-line proximity, and declines to reorder across a ferry crossing.
 
 ---
 
@@ -34,8 +34,8 @@ observation.
 
 Every operational card is intended to answer three questions: **where did this
 come from, when was it valid, and is it observed or estimated?** API responses
-carry provenance fields, and the UI reads them instead of inferring that a
-successful request must be live.
+carry provenance fields, and a client is expected to read them instead of
+inferring that a successful request must be live.
 
 | Component | Source | Status |
 |---|---|---|
@@ -121,10 +121,9 @@ Google only when the explicit enable flag is set. The field mask permits only
 duration, distance and route labels—never geometry, polylines or steps—and the
 response is `private, no-store`, cannot be persisted or used for training, and
 cannot be drawn over the OpenStreetMap/CARTO map. Shortest-distance reference
-routes are clearly labelled experimental. The frontend action is separately
-opted in only when `VITE_ENABLE_GOOGLE_BENCHMARK=true`; it renders attributed
-distance/duration text in its own card and never sends provider content to the
-Leaflet map or browser storage.
+routes are clearly labelled experimental. Any client consuming it must present
+attributed distance/duration as text only, and must never draw provider content
+over an OpenStreetMap/CARTO map or persist it.
 
 The staged activation and camera-feed path is documented in
 [`docs/LIVE_TRAFFIC_AND_FEED_PLAN.md`](docs/LIVE_TRAFFIC_AND_FEED_PLAN.md).
@@ -157,12 +156,8 @@ review/promotion flow, RLS boundary, cache, and fallback behavior.
 
 | Component | Technology | Purpose |
 |---|---|---|
-| **Frontend UI** | React 18, Vite, TypeScript | Modern responsive dashboard |
-| **Styling & Design** | Vanilla CSS Glassmorphism, Outfit & Inter Fonts | Bright light-mode aesthetic, micro-animations |
-| **Interactive Maps** | Leaflet JS + CartoDB Voyager Tiles | Singapore-road, ferry-corridor and Batam-road leg visualization |
 | **Road Graph & Routing** | Committed OpenStreetMap Batam graph + stateful A\*; OSRM/OSM for online access legs | Per-leg road geometry with source-labelled continuity fallback |
 | **Multimodal Composition** | FastAPI journey composer + source-dated operator timetable snapshot | Legal terminal-pair selection, transfer timing and per-leg provenance |
-| **Data Visualization** | Recharts | Congestion trend charts & emissions reduction bars |
 | **Backend & AI Engine** | Python 3.12–3.14, FastAPI, uvicorn | High-performance REST API |
 | **Machine Learning** | scikit-learn Random Forest, NumPy | Synthetic cold start plus optional typed spatial retraining, empirical tree quantiles and calibration metadata |
 
@@ -171,7 +166,6 @@ review/promotion flow, RLS boundary, cache, and fallback behavior.
 ## 📁 Project Structure
 
 ```
-├── frontend/    # React 18 + Vite + TypeScript dashboard and Vitest checks
 ├── backend/     # FastAPI + scikit-learn API and backend regression runner
 ├── scripts/     # Local launcher, graph tooling, and optional training jobs
 ├── .github/     # GitHub Actions CI
@@ -192,34 +186,20 @@ review/promotion flow, RLS boundary, cache, and fallback behavior.
 ./scripts/dev.sh
 ```
 
-Installs anything missing (Python venv + backend requirements, and
-`npm ci`), then runs the backend on **:8000** and the frontend on
-**:3000** together. Ctrl+C stops both.
+Installs anything missing (Python venv + backend requirements), then runs the
+API on **:8000**. Ctrl+C stops it.
 
 | | |
 |---|---|
-| Dashboard | <http://localhost:3000> |
 | API docs | <http://localhost:8000/docs> |
 
-Options: `--install-only`, `--backend-only`, `--frontend-only`, `--clean`,
-and `--force-restart`.
+Options: `--install-only`, `--clean`, and `--force-restart`.
 
 ---
 
 ## 🔧 Manual Setup
 
-### 1. Frontend Web Application Setup
-```bash
-cd frontend
-
-# Install the locked Node dependencies
-npm ci
-
-# Launch frontend dev server on http://localhost:3000
-npm run dev
-```
-
-### 2. Python AI Backend Setup
+### 1. Python AI Backend Setup
 ```bash
 # Create & activate virtual environment
 python3 -m venv .venv
@@ -232,16 +212,9 @@ pip install -r backend/requirements.txt
 python backend/main.py
 ```
 
-### 3. Run the same verification as CI
+### 2. Run the same verification as CI
 
 ```bash
-# Frontend typecheck/build, lint, and regression tests
-cd frontend
-npm run lint
-npm test
-npm run build
-cd ..
-
 # Backend regression checks and launcher validation
 .venv/bin/python backend/test_backend.py
 bash -n scripts/dev.sh
@@ -257,7 +230,7 @@ idempotency, graph revisioning, immutable learning snapshots, clear-road gates,
 physical speed clamping, learned-path cache invalidation and selected-edge-only
 shortcut audits, the opt-in metric-only Google benchmark request/parser,
 server-key isolation and no-store failure behavior, timezone-safe Batam schedules, ferry boarding
-cutoffs, determinism, and dashboard consistency invariants. GitHub Actions runs
+cutoffs, determinism, and response consistency invariants. GitHub Actions runs
 these commands for every push and pull request.
 
 ### 4. Optional configuration
@@ -267,8 +240,6 @@ secrets are configured. Set only the integrations you use:
 
 | Variable | Purpose |
 |---|---|
-| `VITE_API_BASE_URL` | API origin for a split frontend/backend deployment; local Vite and the bundled Vercel config use same-origin `/api` by default. |
-| `VITE_ENABLE_GOOGLE_BENCHMARK` | Must equal `true` to show the optional text-only “Compare online” action. This is a UI gate, never an API key; the server gate and dedicated server key below are also required. |
 | `TOMTOM_API_KEY` | Optional TomTom flow-segment layer used by `/api/live-traffic`. |
 | `SUPABASE_URL` + `SUPABASE_SECRET_KEY` (or legacy `SUPABASE_SERVICE_ROLE_KEY`) | Server-only Supabase credentials. Apply `backend/data/ferry_freshness.sql` for shared ferry verification, and optionally `backend/data/routing_intelligence.sql` for durable typed traffic observations and shortcut review/approval records. Ferry freshness fails closed in production when required durability is unavailable; routing intelligence remains optional and must report its actual storage boundary. Never expose the secret/service-role key. Official `*.supabase.co` hosts are accepted; set `CROSSFLOW_SUPABASE_ALLOWED_HOST` only for an audited self-hosted HTTPS origin. |
 | `CROSSFLOW_REQUIRE_DURABLE_FERRY_FRESHNESS` | Durability gate. `vercel.json` pins it to `1` for Preview and Production so shared freshness cannot silently degrade to process memory. Use `0` only for local committed-snapshot fallback. |
@@ -283,7 +254,7 @@ secrets are configured. Set only the integrations you use:
 | `CROSSFLOW_ADMIN_TOKEN` | Server-only token for protected ingestion, review/promotion, persistence status and retraining operations through the `X-CrossFlow-Admin-Token` header. An unset token denies access; do not reuse a Supabase credential. |
 | `CROSSFLOW_ENABLE_GOOGLE_BENCHMARK` | Must equal `true` to expose the optional, text-only `/api/route-benchmark` comparison. Disabled by default. |
 | `CROSSFLOW_GOOGLE_ROUTES_API_KEY` | Dedicated server-only Google Routes v2 key for the opt-in benchmark. Browser-prefixed and legacy Google keys are never read. |
-| `SUPABASE_DB_URL` | Optional PostgreSQL URL used only by ingestion/training scripts. Never expose it to the frontend. |
+| `SUPABASE_DB_URL` | Optional PostgreSQL URL used only by ingestion/training scripts. Never expose it to a client. |
 
 ### 5. Optional training tooling
 
@@ -337,7 +308,7 @@ border requirements.
 ## 📊 Judging Criteria Alignment
 
 - **Problem Understanding & Relevance**: Covers 30 representative Batam mobility pressure points, including Simpang Kabil, Mukakuning Industrial and Batu Ampar Port, while connecting Singapore origins and destinations through the ferry interface. The priority labels are planning outputs, not claims of current official severity.
-- **Technical Execution & Engineering Quality**: TypeScript React frontend + FastAPI service, stateful vehicle- and preference-aware A\* over a committed Batam OSM graph, per-leg SG–ferry–Batam journey composition, and a browser fallback that preserves source and limitation labels when online routing is unavailable.
+- **Technical Execution & Engineering Quality**: FastAPI service with a stateful vehicle- and preference-aware A\* over a committed Batam OSM graph, per-leg SG–ferry–Batam journey composition, multi-stop journey scheduling, and source and limitation labels preserved on every leg when online routing is unavailable.
 - **Innovation & Creativity**: Cross-modal departure planning couples road access with a matching published ferry window while keeping schedule evidence distinct from live operating status.
 - **Impact & Feasibility**: Models roughly **540 kg CO2 per day** of avoidable idle emissions across five corridors, under assumptions published in the API response (40 advised trips/corridor/hour, 35% of queue delay avoidable, 1.8 kg/h idle burn). These are modelled projections from a simulated traffic layer, not measured outcomes.
 - **Presentation & Demo**: Interactive stage pitch deck, responsive light-theme UI, and honest data-provenance labelling throughout.

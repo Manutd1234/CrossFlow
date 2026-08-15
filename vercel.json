@@ -5,28 +5,14 @@
   },
   "builds": [
     {
-      "src": "frontend/package.json",
-      "use": "@vercel/static-build",
-      "config": {
-        "distDir": "dist"
-      }
-    },
-    {
       "src": "backend/main.py",
       "use": "@vercel/python"
     }
   ],
   "routes": [
     {
-      "src": "/api/(.*)",
-      "dest": "backend/main.py"
-    },
-    {
-      "handle": "filesystem"
-    },
-    {
       "src": "/(.*)",
-      "dest": "frontend/$1"
+      "dest": "backend/main.py"
     }
   ]
 }
