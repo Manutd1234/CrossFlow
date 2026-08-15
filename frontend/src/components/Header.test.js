@@ -11,8 +11,8 @@ describe('Header', () => {
       statusDetail: 'Waiting for sync',
     }));
 
-    expect(markup).toContain('CrossFlow');
-    expect(markup).toContain('AI');
+    expect(markup).toContain('Cross');
+    expect(markup).toContain('Flow');
     expect(markup).toContain('Local continuity');
     expect(markup).toContain('Waiting for sync');
     expect(markup).not.toContain('<button');

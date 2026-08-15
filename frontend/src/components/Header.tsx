@@ -12,9 +12,8 @@ export function Header({ statusTone, statusLabel, statusDetail }: HeaderProps) {
       <div className="application-header__content">
         <div className="application-brand">
           <h1 className="application-brand__name">
-            CrossFlow <span>AI</span>
+            Cross<span>Flow</span>
           </h1>
-          <span className="application-brand__tagline">Batam · Singapore mobility</span>
         </div>
 
         <div
