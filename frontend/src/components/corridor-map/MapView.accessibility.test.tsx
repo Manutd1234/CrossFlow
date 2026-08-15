@@ -195,11 +195,21 @@ describe('MapView traffic overlay controls', () => {
     expect(container.querySelectorAll('.hotspot-card.ui-sand-interactive')).toHaveLength(30);
     expect(container.querySelectorAll('.hotspot-card__credit-meta')).toHaveLength(30);
     expect(container.querySelectorAll('.hotspot-card__credit-meta a')).toHaveLength(60);
+    expect(container.querySelector<HTMLElement>('.hotspot-watch__list')?.tabIndex).toBe(0);
+    expect(container.querySelector('.hotspot-watch__list')?.getAttribute('aria-label'))
+      .toContain('Scrollable');
     expect(container.textContent).toContain('30-Area Congestion Watch');
     expect(container.textContent).toContain('20 critical');
     expect(container.textContent).toContain('10 heavy');
-    expect(L.polyline).not.toHaveBeenCalled();
-    expect(leafletTestState.corridorClickHandlers).toHaveLength(0);
+    expect(L.polyline).toHaveBeenCalledTimes(10);
+    expect(leafletTestState.corridorClickHandlers).toHaveLength(5);
+
+    const tabs = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[aria-label="Corridor map sections"] [role="tab"]'),
+    );
+    act(() => leafletTestState.corridorClickHandlers[0]?.());
+    expect(tabs[1].getAttribute('aria-selected')).toBe('true');
+    expect(document.activeElement).toBe(tabs[1]);
 
     const toggle = container.querySelector<HTMLButtonElement>('.map-traffic-toggle');
     expect(toggle?.getAttribute('aria-pressed')).toBe('true');
@@ -254,6 +264,9 @@ describe('MapView traffic overlay controls', () => {
       .toContain('Mukakuning Industrial');
     expect(container.querySelector('#corridor-feed-title')).not.toBeNull();
     expect(container.querySelector('.map-corridor-stack')?.children).toHaveLength(2);
+    expect(container.querySelector<HTMLElement>('.corridor-feed-list')?.tabIndex).toBe(0);
+    expect(container.querySelector('.corridor-feed-list')?.getAttribute('aria-label'))
+      .toContain('Scrollable');
     expect(mapPanel?.closest('[hidden]')).toBeNull();
 
     act(() => leafletTestState.hotspotClickHandlers[0]?.());
@@ -263,7 +276,7 @@ describe('MapView traffic overlay controls', () => {
       .toBe('hotspot-card-zone-simpang-jam');
   });
 
-  it('draws corridor road geometry coloured by congestion on the Corridor tab', () => {
+  it('keeps corridor road geometry coloured by congestion across both subtabs', () => {
     const secondCorridor: Corridor = {
       id: 'corridor-2',
       name: 'Batu Ampar Freight Port -> Batam Centre Ferry',
@@ -294,16 +307,16 @@ describe('MapView traffic overlay controls', () => {
       />,
     );
 
-    // The Hotspots tab stays free of route lines; they belong to the panel
-    // that actually reports a corridor.
-    expect(L.polyline).not.toHaveBeenCalled();
+    // One casing plus one line for each corridor is already present while the
+    // Hotspots tab is active.
+    expect(L.polyline).toHaveBeenCalledTimes(10);
 
     const tabs = Array.from(
       container.querySelectorAll<HTMLButtonElement>('[aria-label="Corridor map sections"] [role="tab"]'),
     );
     act(() => tabs[1].click());
 
-    // One casing plus one line for each of the five corridors.
+    // Switching tabs retains the same layers instead of rebuilding them.
     expect(L.polyline).toHaveBeenCalledTimes(10);
     const calls = vi.mocked(L.polyline).mock.calls;
     const geometry = [[1.0605, 104.0303], [1.1, 104.04], [1.1318, 104.0554]];

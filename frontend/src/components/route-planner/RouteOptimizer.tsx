@@ -12,12 +12,13 @@ import type {
 import {
   ApiRequestError,
   googleRouteBenchmarkEnabled,
+  requestPersistedRoute,
   requestFreeRouteOptimization,
   requestMultiStopRouteOptimization,
   requestRouteBenchmark,
   requestRouteOptimization,
 } from '../../services/api';
-import { Anchor, ArrowDownUp, Bike, BusFront, Car, ChevronDown, CircleCheck, CircleDot, CircleSmall, Clock, CloudRain, CloudSun, Coffee, CornerUpLeft, CornerUpRight, Flag, Fuel, Globe, Info, Leaf, Lightbulb, LoaderCircle, MapPin, MoveUp, Navigation, Package, Plus, Redo, RotateCw, Route, ShieldCheck, Ship, Sparkles, TriangleAlert, Truck, Users, X, Zap, type LucideIcon } from 'lucide-react';
+import { Anchor, ArrowDownUp, Bike, BusFront, Car, ChevronDown, CircleCheck, CircleDot, CircleSmall, Clock, CloudRain, CloudSun, Coffee, CornerUpLeft, CornerUpRight, Flag, Fuel, Globe, Info, KeyRound, Leaf, Lightbulb, LoaderCircle, MapPin, MoveUp, Navigation, Package, Plus, Redo, RotateCw, Route, ShieldCheck, Ship, Sparkles, TriangleAlert, Truck, Users, X, Zap, type LucideIcon } from 'lucide-react';
 import { ICON_SIZE } from '../../theme/iconSizes';
 
 import {
@@ -57,6 +58,8 @@ interface RouteOptimizerProps {
   setWeather: (w: number) => void;
   hour: number;
   setHour: (h: number) => void;
+  driverAccess?: boolean;
+  accessToken?: string | null;
 }
 
 const WEATHER_OPTIONS = [
@@ -180,6 +183,7 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
   result, setResult, resultSource, setResultSource,
   vehicleType, setVehicleType, routePreference, setRoutePreference,
   weather, setWeather, hour, setHour,
+  driverAccess = false, accessToken = null,
 }) => {
   const [loading, setLoading] = useState<boolean>(false);
   const [routeError, setRouteError] = useState<string | null>(null);
@@ -193,6 +197,7 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
   const [departureMinute, setDepartureMinute] = useState(() => new Date().getMinutes());
   const [arrivalHour, setArrivalHour] = useState(() => (new Date().getHours() + 1) % 24);
   const [arrivalMinute, setArrivalMinute] = useState(() => new Date().getMinutes());
+  const [routeCode, setRouteCode] = useState('');
   const optimizationRequestRef = useRef(0);
   const benchmarkRequestRef = useRef(0);
   const vehicleSelectorRef = useRef<HTMLDivElement>(null);
@@ -415,6 +420,28 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
     }
   };
 
+  const handleAssignedRouteLookup = async () => {
+    const normalizedCode = routeCode.trim().toUpperCase();
+    if (!/^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{7}$/.test(normalizedCode)) return;
+    clearRouteBenchmark();
+    setActiveResultTab('summary');
+    setSelectedRouteId(PRIMARY_ROUTE_ID);
+    setLoading(true);
+    setRouteError(null);
+    try {
+      const response = await requestPersistedRoute(normalizedCode, accessToken);
+      setResult(response.data);
+      setResultSource(response.source);
+    } catch (error) {
+      setResult(null);
+      setRouteError(error instanceof ApiRequestError
+        ? error.message
+        : 'The assigned route could not be loaded.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleRouteBenchmark = async () => {
     const benchmarkOrigin = result?.requested_origin;
     const benchmarkDestination = result?.requested_destination;
@@ -494,8 +521,8 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
   }, []);
 
   return (
-    <div className="app-screen-layout route-planner-layout">
-      <div className="workspace-subtabs__rail">
+    <div className={`app-screen-layout route-planner-layout${driverAccess ? ' route-planner-layout--driver' : ''}`}>
+      {!driverAccess ? <div className="workspace-subtabs__rail">
         <div role="group" aria-label="Location selection mode" className="workspace-subtabs__tablist route-location-mode-tabs">
           <button
             type="button"
@@ -528,16 +555,43 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
             </span>
           </button>
         </div>
-      </div>
+      </div> : null}
 
       <form
         className="glass-panel route-planner-sidebar"
-        aria-label="Route planning controls"
+        aria-label={driverAccess ? 'Assigned route lookup' : 'Route planning controls'}
         onSubmit={(event) => {
           event.preventDefault();
-          void handleOptimize();
+          void (driverAccess ? handleAssignedRouteLookup() : handleOptimize());
         }}
       >
+        {driverAccess ? (
+          <div className="route-sidebar-controls route-code-lookup">
+            <div className="route-code-lookup__heading">
+              <div className="route-code-lookup__title-row">
+                <KeyRound size={ICON_SIZE.large} aria-hidden="true" />
+                <h3>Assigned route</h3>
+              </div>
+              <p>Enter the code supplied by dispatch to load your journey.</p>
+            </div>
+            <label className="route-code-lookup__field" htmlFor="driver-route-code">
+              <span>7-character route code</span>
+              <input
+                id="driver-route-code"
+                type="text"
+                inputMode="text"
+                autoComplete="off"
+                maxLength={7}
+                pattern="[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{7}"
+                placeholder="e.g. 4KF9X2P"
+                value={routeCode}
+                onChange={(event) => setRouteCode(
+                  event.target.value.toUpperCase().replace(/[^23456789ABCDEFGHJKLMNPQRSTUVWXYZ]/g, '').slice(0, 7),
+                )}
+              />
+            </label>
+          </div>
+        ) : (
         <div className="route-sidebar-controls">
         {/* Free search or ID-backed named location controls. */}
         <fieldset className="route-endpoint-section">
@@ -1018,16 +1072,19 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
           })}
         </div>
         </div>
+        )}
 
         <button
           type="submit"
           className="ui-button-primary"
           aria-busy={loading}
 
-          disabled={loading || !canOptimize}
+          disabled={loading || (driverAccess
+            ? !/^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{7}$/.test(routeCode)
+            : !canOptimize)}
         >
           {loading ? <LoaderCircle size={ICON_SIZE.large} aria-hidden="true" className="route-loading-spinner" /> : <Route size={ICON_SIZE.large} aria-hidden="true" />}
-          {loading ? 'Composing Journey…' : 'Plan Journey'}
+          {loading ? (driverAccess ? 'Loading Route…' : 'Composing Journey…') : (driverAccess ? 'Load Route' : 'Plan Journey')}
         </button>
       </form>
 
