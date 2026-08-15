@@ -4,17 +4,22 @@ import { describe, expect, it } from 'vitest';
 import { Header } from './Header';
 
 describe('Header', () => {
-  it('renders the brand and requested status without a presentation button', () => {
+  it.each([
+    ['live', 'Live', 'status-badge--green'],
+    ['model-estimate', 'Model Estimate', 'status-badge--orange'],
+    ['local-estimate', 'Local Estimate', 'status-badge--orange'],
+  ])('renders the brand and %s status without subtext', (status, label, statusClass) => {
     const markup = renderToStaticMarkup(createElement(Header, {
-      statusTone: 'gray',
-      statusLabel: 'Local continuity',
-      statusDetail: 'Waiting for sync',
+      status,
+      activeTab: 'congestion',
+      onTabChange: () => {},
     }));
 
     expect(markup).toContain('Cross');
     expect(markup).toContain('Flow');
-    expect(markup).toContain('Local continuity');
-    expect(markup).toContain('Waiting for sync');
-    expect(markup).not.toContain('<button');
+    expect(markup).toContain(`>${label}</span>`);
+    expect(markup).toContain(statusClass);
+    expect(markup).not.toContain('Network conditions');
+    expect(markup).not.toContain('Plan a road journey');
   });
 });

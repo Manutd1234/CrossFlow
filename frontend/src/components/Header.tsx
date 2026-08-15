@@ -1,12 +1,23 @@
-export type StatusTone = 'red' | 'orange' | 'green' | 'blue' | 'gray';
+import { Badge } from './Badge';
+import { Navigation, type NavigationTab } from './Navigation';
+
+export type ApplicationStatus = 'live' | 'model-estimate' | 'local-estimate';
 
 interface HeaderProps {
-  statusTone: StatusTone;
-  statusLabel: string;
-  statusDetail: string;
+  status: ApplicationStatus;
+  activeTab: NavigationTab;
+  onTabChange: (tab: NavigationTab) => void;
 }
 
-export function Header({ statusTone, statusLabel, statusDetail }: HeaderProps) {
+const APPLICATION_STATUS = {
+  live: { label: 'Live', tone: 'green' },
+  'model-estimate': { label: 'Model Estimate', tone: 'orange' },
+  'local-estimate': { label: 'Local Estimate', tone: 'orange' },
+} as const;
+
+export function Header({ status, activeTab, onTabChange }: HeaderProps) {
+  const statusPresentation = APPLICATION_STATUS[status];
+
   return (
     <header className="application-header">
       <div className="application-header__content">
@@ -16,17 +27,13 @@ export function Header({ statusTone, statusLabel, statusDetail }: HeaderProps) {
           </h1>
         </div>
 
-        <div
-          className={`system-status-card system-status-card--${statusTone}`}
+        <Navigation activeTab={activeTab} onTabChange={onTabChange} />
+
+        <Badge
+          tone={statusPresentation.tone}
+          label={statusPresentation.label}
           role="status"
-          aria-label={`${statusLabel}. ${statusDetail}`}
-        >
-          <span className="system-status-card__indicator" aria-hidden="true" />
-          <span className="system-status-card__content">
-            <strong>{statusLabel}</strong>
-            <span>{statusDetail}</span>
-          </span>
-        </div>
+        />
       </div>
     </header>
   );

@@ -26,3 +26,21 @@ describe('status palette', () => {
     expect(stylesheet).not.toContain('--sunset');
   });
 });
+
+describe('compact application header', () => {
+  it('uses compact rail dimensions and delays wrapping until narrow screens', () => {
+    expect(stylesheet).toMatch(/\.application-header__content\s*{[\s\S]*?padding:\s*8px 16px;/);
+    expect(stylesheet).toContain('--navigation-rail-padding: 4px;');
+    expect(stylesheet).toMatch(/\.application-navigation\s*{[\s\S]*?padding:\s*var\(--navigation-rail-padding\);/);
+    expect(stylesheet).toMatch(/\.application-navigation__tab\s*{[\s\S]*?min-height:\s*40px;/);
+    expect(stylesheet).toContain('@media (max-width: 640px)');
+    expect(stylesheet).not.toContain('@media (max-width: 900px)');
+  });
+});
+
+describe('primary gradient palette', () => {
+  it('uses the cleaner emerald endpoint for primary gradients', () => {
+    expect(stylesheet).toContain('--primary-button-end: #047857;');
+    expect(stylesheet).not.toContain('#376b52');
+  });
+});
