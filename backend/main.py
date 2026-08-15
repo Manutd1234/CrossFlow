@@ -4,7 +4,7 @@ import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 
 # Vercel loads this entry point as ``backend.main`` from the repository root,
@@ -39,10 +39,12 @@ from services.route_learning_store import (
 from services.route_solver import (
     CORRIDORS,
     MAX_FREE_ROUTE_SNAP_M,
+    MAX_MULTI_STOP_COUNT,
+    MAX_MULTI_STOP_DWELL_MINS,
     ROUTE_LOCATIONS,
     optimize_route,
 )
-from services.route_solver import optimize_free_route
+from services.route_solver import optimize_free_route, optimize_multi_stop_route
 from services.simulator import get_live_corridor_telemetry, get_operations_summary
 
 
@@ -120,6 +122,34 @@ class FreeRouteRequest(BaseModel):
     hour: Optional[int] = Field(default=14, ge=0, le=23)
     weather: Optional[int] = Field(default=0, ge=0, le=2)
     route_preference: RoutePreference = "BALANCED"
+
+
+class RouteStop(BaseModel):
+    """One stop on a multi-destination journey."""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    lat: float = Field(ge=-90, le=90)
+    lng: float = Field(ge=-180, le=180)
+    name: Optional[str] = Field(default=None, max_length=200)
+    # Time spent at this stop before departing for the next one. Ignored on the
+    # origin and the final destination, neither of which is waited at.
+    dwell_mins: float = Field(default=0.0, ge=0, le=MAX_MULTI_STOP_DWELL_MINS)
+
+
+class MultiStopRouteRequest(BaseModel):
+    """Ordered stops for one scheduled multi-destination journey."""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    stops: List[RouteStop] = Field(min_length=3, max_length=MAX_MULTI_STOP_COUNT)
+    vehicle_type: VehicleType = "COMMUTER"
+    hour: Optional[int] = Field(default=14, ge=0, le=23)
+    weather: Optional[int] = Field(default=0, ge=0, le=2)
+    route_preference: RoutePreference = "BALANCED"
+    # Off by default: the requested order is the caller's itinerary, and
+    # reordering it silently would change where the driver actually goes.
+    optimize_order: bool = False
 
 
 class RouteBenchmarkRequest(BaseModel):
@@ -724,6 +754,38 @@ def api_optimize_free_route(req: FreeRouteRequest):
             origin_name=req.origin_name,
             destination_name=req.destination_name,
             route_preference=req.route_preference,
+            schedule_verified_at=schedule_verified_at,
+            approved_override_snapshot=approved_snapshot,
+        )
+    except ValueError as err:
+        raise HTTPException(status_code=400, detail=str(err)) from err
+    _routing_intelligence_audit(result, approved_snapshot, snapshot_source)
+    return envelope(result, now)
+
+
+@app.post("/api/optimize-multi-stop-route")
+@app.post("/optimize-multi-stop-route")
+def api_optimize_multi_stop_route(req: MultiStopRouteRequest):
+    """Schedule one journey through three or more ordered stops.
+
+    Each consecutive pair is solved by the same engines as a two-point route —
+    the committed Batam OSM graph, or the multimodal composer when a leg
+    touches Singapore — and departs when the previous leg arrives plus that
+    stop's dwell. Every leg runs a full A* search, so response time grows with
+    the stop count.
+    """
+    now = clock.now()
+    schedule_verified_at = _require_current_ferry_freshness_for_route()
+    approved_snapshot, snapshot_source = _approved_override_snapshot_for_route()
+    try:
+        result = optimize_multi_stop_route(
+            stops=[stop.model_dump() for stop in req.stops],
+            vehicle_type=req.vehicle_type,
+            hour=req.hour if req.hour is not None else 14,
+            weather=req.weather or 0,
+            now=now,
+            route_preference=req.route_preference,
+            optimize_order=req.optimize_order,
             schedule_verified_at=schedule_verified_at,
             approved_override_snapshot=approved_snapshot,
         )

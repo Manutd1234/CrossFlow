@@ -25,7 +25,7 @@ from urllib.parse import parse_qs, urlencode, urlparse
 from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 from zoneinfo import ZoneInfo
 
-from services import ferry_schedule
+from services import ferry_schedule, tls
 
 
 REFRESH_COOLDOWN_SECONDS = 300
@@ -271,13 +271,16 @@ class _AllowlistedRedirectHandler(HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
-_OPENER = build_opener(_AllowlistedRedirectHandler())
+_OPENER = build_opener(
+    _AllowlistedRedirectHandler(),
+    HTTPSHandler(context=tls.default_context()),
+)
 
 # BP Batam's official host currently requires legacy TLS renegotiation. Keep
 # certificate and hostname verification enabled, and scope the compatibility
 # option to that one reviewed hostname rather than weakening every source.
 _BP_BATAM_HOST = "batamport.bpbatam.go.id"
-_BP_TLS_CONTEXT = ssl.create_default_context()
+_BP_TLS_CONTEXT = tls.new_context()
 if hasattr(ssl, "OP_LEGACY_SERVER_CONNECT"):
     _BP_TLS_CONTEXT.options |= ssl.OP_LEGACY_SERVER_CONNECT
 _BP_OPENER = build_opener(

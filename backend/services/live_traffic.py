@@ -30,7 +30,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Any, Dict, List, Mapping, Optional
 
-from services import clock
+from services import clock, tls
 
 _TOMTOM_FLOW_BASE = (
     "https://api.tomtom.com/traffic/services/4/flowSegmentData/relative0/10/json"
@@ -220,7 +220,9 @@ def _tomtom_segment(
     url = f"{_TOMTOM_FLOW_BASE}?{query}"
     try:
         req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
-        with urllib.request.urlopen(req, timeout=_TOMTOM_TIMEOUT_S) as resp:
+        with urllib.request.urlopen(
+            req, timeout=_TOMTOM_TIMEOUT_S, context=tls.default_context(),
+        ) as resp:
             data = json.loads(resp.read())
         segment = data.get("flowSegmentData")
         if not isinstance(segment, dict):

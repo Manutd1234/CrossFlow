@@ -13,6 +13,7 @@ import json
 import math
 import os
 import sqlite3
+import ssl
 import subprocess
 import sys
 import tempfile
@@ -47,7 +48,7 @@ from services import (  # noqa: E402
     geocoder, google_maps_router,
     google_routes_benchmark, historical_store, live_traffic, multimodal_router,
     route_learning_store as learning_store, router, route_solver,
-    supabase_pgrouting,
+    supabase_pgrouting, tls,
 )
 from scripts import build_graph  # noqa: E402
 from services.route_solver import (  # noqa: E402
@@ -1079,9 +1080,10 @@ def test_google_routes_benchmark_request_and_parser_are_metric_only():
         os.environ["CROSSFLOW_ENABLE_GOOGLE_BENCHMARK"] = "true"
         os.environ["CROSSFLOW_GOOGLE_ROUTES_API_KEY"] = "server-benchmark-key"
 
-        def fake_urlopen(request, timeout):
+        def fake_urlopen(request, timeout, **kwargs):
             captured["request"] = request
             captured["timeout"] = timeout
+            captured["ssl_context"] = kwargs.get("context")
             return FakeResponse()
 
         google_routes_benchmark.urllib.request.urlopen = fake_urlopen
@@ -4027,9 +4029,10 @@ def test_tomtom_flow_request_uses_supported_unit_and_runtime_key():
 
     captured = {}
 
-    def fake_urlopen(request, timeout):
+    def fake_urlopen(request, timeout, **kwargs):
         captured["url"] = request.full_url
         captured["timeout"] = timeout
+        captured["ssl_context"] = kwargs.get("context")
         return FakeResponse()
 
     original_key = os.environ.get("TOMTOM_API_KEY")
@@ -4977,6 +4980,338 @@ def test_retraining_endpoint_requires_admin_authorization():
     finally:
         if original_token is not None:
             os.environ["CROSSFLOW_ADMIN_TOKEN"] = original_token
+
+
+# --------------------------------------------------------------------------
+# Outbound TLS trust store
+# --------------------------------------------------------------------------
+
+def test_tls_context_verifies_certificates_and_loads_ca_roots():
+    """An empty trust store silently degraded every provider to an estimate."""
+    context = tls.default_context()
+    assert context.verify_mode == ssl.CERT_REQUIRED
+    assert context.check_hostname is True
+    assert context.cert_store_stats()["x509_ca"] > 0, (
+        "no CA roots are loaded, so every outbound HTTPS call will fail "
+        "verification and fall back to an offline estimate"
+    )
+
+
+def test_tls_default_context_is_shared_and_new_context_is_independent():
+    """Per-host options must not leak into every other caller's requests."""
+    assert tls.default_context() is tls.default_context()
+    separate = tls.new_context()
+    assert separate is not tls.default_context()
+    separate.options |= ssl.OP_LEGACY_SERVER_CONNECT
+    assert not tls.default_context().options & ssl.OP_LEGACY_SERVER_CONNECT
+
+
+def test_osrm_request_presents_a_verifying_tls_context():
+    """The Singapore road legs are straight lines whenever this regresses."""
+    captured = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return json.dumps({
+                "code": "Ok",
+                "routes": [{
+                    "distance": 8000.0,
+                    "duration": 900.0,
+                    "geometry": {"coordinates": [
+                        [103.8198, 1.3521], [103.8300, 1.3400],
+                        [103.8547, 1.2966],
+                    ]},
+                    "legs": [{"steps": [
+                        {"distance": 4000.0, "maneuver": {
+                            "type": "depart", "modifier": "straight",
+                            "location": [103.8198, 1.3521],
+                        }, "name": "Woodlands Road"},
+                        {"distance": 4000.0, "maneuver": {
+                            "type": "turn", "modifier": "left",
+                            "location": [103.8300, 1.3400],
+                        }, "name": "Bukit Timah Road"},
+                    ]}],
+                }],
+            }).encode()
+
+    def fake_urlopen(request, timeout, **kwargs):
+        captured["timeout"] = timeout
+        captured["context"] = kwargs.get("context")
+        return FakeResponse()
+
+    original_urlopen = multimodal_router.urllib.request.urlopen
+    try:
+        multimodal_router.urllib.request.urlopen = fake_urlopen
+        leg = multimodal_router._osrm_route((1.3521, 103.8198), (1.2966, 103.8547))
+    finally:
+        multimodal_router.urllib.request.urlopen = original_urlopen
+
+    assert leg is not None
+    assert leg["data_source"] == "osrm_openstreetmap"
+    assert leg["is_estimate"] is False
+    assert len(leg["geometry"]) == 3
+    context = captured["context"]
+    assert context is tls.default_context()
+    assert context.verify_mode == ssl.CERT_REQUIRED
+    assert context.check_hostname is True
+
+
+# --------------------------------------------------------------------------
+# Multi-stop journeys
+# --------------------------------------------------------------------------
+
+# Closely-spaced Batam stops keep each A* search cheap; the schedule and
+# aggregation logic under test does not depend on leg length.
+_MULTI_STOP_NAGOYA = {"lat": 1.1465, "lng": 104.0125, "name": "Nagoya Hill"}
+_MULTI_STOP_CENTRE = {"lat": 1.1318, "lng": 104.0554, "name": "Batam Centre"}
+_MULTI_STOP_AMPAR = {"lat": 1.1480, "lng": 104.0060, "name": "Batu Ampar"}
+
+
+def _multi_stop_result(**overrides):
+    parameters = {
+        "stops": [
+            _MULTI_STOP_AMPAR,
+            {**_MULTI_STOP_NAGOYA, "dwell_mins": 20},
+            _MULTI_STOP_CENTRE,
+        ],
+        "vehicle_type": "COMMUTER",
+        "hour": 14,
+        "now": WEEKDAY_1400,
+    }
+    parameters.update(overrides)
+    return route_solver.optimize_multi_stop_route(**parameters)
+
+
+def test_multi_stop_route_chains_legs_into_one_schedule():
+    result = _multi_stop_result()
+
+    assert result["route_type"] == "MULTI_STOP_ROUTE"
+    assert result["corridor"]["stop_count"] == 3
+    assert result["corridor"]["leg_count"] == 2
+    assert len(result["legs"]) == 2
+    assert [stop["role"] for stop in result["stops"]] == [
+        "ORIGIN", "WAYPOINT", "DESTINATION",
+    ]
+
+    first, second = result["legs"]
+    assert first["to_name"] == "Nagoya Hill"
+    assert second["from_name"] == "Nagoya Hill"
+    # The second leg departs only after the first arrives plus the dwell.
+    first_arrival = datetime.fromisoformat(first["arrival"])
+    second_departure = datetime.fromisoformat(second["departure"])
+    assert second_departure - first_arrival == timedelta(minutes=20)
+
+
+def test_multi_stop_totals_are_the_sum_of_their_legs():
+    result = _multi_stop_result()
+    legs = result["legs"]
+
+    assert result["corridor"]["distance_km"] == round(
+        sum(leg["distance_km"] for leg in legs), 2,
+    )
+    assert result["estimated_travel_time_mins"] == round(
+        sum(leg["estimated_travel_time_mins"] for leg in legs), 1,
+    )
+    assert result["co2_emissions_kg"] == round(
+        sum(leg["co2_emissions_kg"] for leg in legs), 2,
+    )
+    assert result["dwell_time_mins"] == 20.0
+
+    departure = datetime.fromisoformat(result["planned_departure"])
+    arrival = datetime.fromisoformat(result["estimated_arrival"])
+    elapsed = round((arrival - departure).total_seconds() / 60.0, 1)
+    assert result["total_eta_mins"] == elapsed
+    # Dwell is real elapsed time, so the journey cannot finish in travel alone.
+    assert result["total_eta_mins"] > result["estimated_travel_time_mins"]
+
+
+def test_multi_stop_geometry_and_navigation_join_without_duplication():
+    result = _multi_stop_result()
+    legs = result["legs"]
+
+    combined = result["route_geometry"]
+    leg_points = sum(len(leg["route_geometry"]) for leg in legs)
+    # Exactly one shared point is dropped at the intermediate stop.
+    assert len(combined) == leg_points - 1
+    assert combined[0] == list(legs[0]["route_geometry"][0])
+    assert combined[-1] == list(legs[-1]["route_geometry"][-1])
+
+    maneuvers = result["navigation"]["maneuvers"]
+    assert [step["step"] for step in maneuvers] == list(
+        range(1, len(maneuvers) + 1),
+    )
+    cumulative = [step["cumulative_distance_m"] for step in maneuvers]
+    assert cumulative == sorted(cumulative), "distance from start must not reset"
+    # The stop in the middle is a waypoint, not the end of the journey.
+    assert [step["type"] for step in maneuvers].count("ARRIVE") == 1
+    assert maneuvers[-1]["type"] == "ARRIVE"
+    waypoints = [step for step in maneuvers if step["type"] == "WAYPOINT"]
+    assert len(waypoints) == 1
+    assert "Nagoya Hill" in waypoints[0]["instruction"]
+
+
+def test_multi_stop_dwell_applies_only_to_intermediate_stops():
+    result = _multi_stop_result(stops=[
+        {**_MULTI_STOP_AMPAR, "dwell_mins": 45},
+        {**_MULTI_STOP_NAGOYA, "dwell_mins": 10},
+        {**_MULTI_STOP_CENTRE, "dwell_mins": 60},
+    ])
+    assert [stop["dwell_mins"] for stop in result["stops"]] == [0.0, 10.0, 0.0]
+    assert result["dwell_time_mins"] == 10.0
+
+
+def test_multi_stop_order_optimization_pins_both_endpoints():
+    zigzag = [
+        _MULTI_STOP_AMPAR,
+        {"lat": 1.1211, "lng": 104.1147, "name": "Hang Nadim"},
+        _MULTI_STOP_NAGOYA,
+        _MULTI_STOP_CENTRE,
+    ]
+    optimized = route_solver.optimize_multi_stop_route(
+        stops=zigzag, vehicle_type="COMMUTER", hour=14, now=WEEKDAY_1400,
+        optimize_order=True,
+    )
+    metadata = optimized["stop_order_optimization"]
+    assert metadata["applied"] is True
+    assert metadata["method"] == "nearest_neighbour_2opt_straight_line"
+    # A reordering heuristic that quietly moved the endpoints would send the
+    # driver somewhere they never asked to start or finish.
+    assert optimized["stops"][0]["name"] == "Batu Ampar"
+    assert optimized["stops"][-1]["name"] == "Batam Centre"
+    assert {stop["name"] for stop in optimized["stops"]} == {
+        stop["name"] for stop in zigzag
+    }
+    assert [stop["name"] for stop in optimized["stops"]] != [
+        stop["name"] for stop in zigzag
+    ]
+    assert "straight-line" in metadata["limitations"]
+
+
+def test_multi_stop_order_is_not_optimized_across_a_ferry_crossing():
+    original_osrm = multimodal_router._osrm_route
+    try:
+        # Keep the suite offline; the ordering decision under test is made
+        # before any road engine is consulted.
+        multimodal_router._osrm_route = lambda *_args: None
+        result = route_solver.optimize_multi_stop_route(
+            stops=[
+                {"lat": 1.29027, "lng": 103.851959, "name": "Singapore CBD"},
+                _MULTI_STOP_NAGOYA,
+                _MULTI_STOP_CENTRE,
+                _MULTI_STOP_AMPAR,
+            ],
+            vehicle_type="COMMUTER", hour=14, now=WEEKDAY_1400,
+            optimize_order=True,
+        )
+    finally:
+        multimodal_router._osrm_route = original_osrm
+    metadata = result["stop_order_optimization"]
+    assert metadata["requested"] is True
+    assert metadata["applied"] is False
+    assert "ferry crossing" in metadata["reason"]
+    assert result["stops"][1]["name"] == "Nagoya Hill"
+    assert result["route_type"] == "MULTIMODAL_MULTI_STOP_ROUTE"
+
+
+def test_multi_stop_rejects_unusable_itineraries():
+    cases = [
+        ([_MULTI_STOP_AMPAR, _MULTI_STOP_NAGOYA], "at least three stops"),
+        ([_MULTI_STOP_AMPAR] * 9, "at most 8 stops"),
+        (
+            [{"lat": -6.2, "lng": 106.8}, _MULTI_STOP_NAGOYA, _MULTI_STOP_CENTRE],
+            "outside the supported",
+        ),
+        (
+            [_MULTI_STOP_AMPAR, {"lng": 104.01}, _MULTI_STOP_CENTRE],
+            "numeric lat and lng",
+        ),
+        (
+            [
+                _MULTI_STOP_AMPAR,
+                {**_MULTI_STOP_NAGOYA, "dwell_mins": -5},
+                _MULTI_STOP_CENTRE,
+            ],
+            "negative dwell_mins",
+        ),
+    ]
+    for stops, expected in cases:
+        try:
+            route_solver.optimize_multi_stop_route(
+                stops=stops, vehicle_type="COMMUTER", hour=14, now=WEEKDAY_1400,
+            )
+        except ValueError as error:
+            assert expected in str(error), f"{expected!r} not in {error}"
+        else:
+            raise AssertionError(f"accepted an itinerary that {expected}")
+
+
+def test_multi_stop_endpoint_returns_an_enveloped_journey():
+    original_load = ferry_freshness_store.load
+    try:
+        latest = "2026-08-13T00:30:50+07:00"
+        snapshot_id = ferry_schedule.timetable_metadata(
+            load_durable=False,
+        )["snapshot_id"]
+        ferry_freshness_store.load = lambda candidate: {
+            "snapshot_id": snapshot_id,
+            "latest_checked_at": latest,
+            "last_verified_at": latest,
+        }
+        ferry_schedule._reset_runtime_verification_for_tests()
+        with clock.frozen(WEEKDAY_1400):
+            response = api_main.api_optimize_multi_stop_route(
+                api_main.MultiStopRouteRequest(
+                    stops=[
+                        api_main.RouteStop(**_MULTI_STOP_AMPAR),
+                        api_main.RouteStop(**_MULTI_STOP_NAGOYA, dwell_mins=15),
+                        api_main.RouteStop(**_MULTI_STOP_CENTRE),
+                    ],
+                ),
+            )
+    finally:
+        ferry_freshness_store.load = original_load
+        ferry_schedule._reset_runtime_verification_for_tests()
+
+    assert response["route_type"] == "MULTI_STOP_ROUTE"
+    assert response["corridor"]["leg_count"] == 2
+    assert response["generated_at"]
+    assert response["service_audit"]["routing_contract_version"] == 1
+
+
+def test_multi_stop_request_model_rejects_a_two_point_itinerary():
+    try:
+        api_main.MultiStopRouteRequest(stops=[
+            api_main.RouteStop(**_MULTI_STOP_AMPAR),
+            api_main.RouteStop(**_MULTI_STOP_CENTRE),
+        ])
+    except ValidationError:
+        pass
+    else:
+        raise AssertionError("a two-stop multi-destination request was accepted")
+
+
+def test_leg_mode_matches_the_full_solver_geometry_without_alternatives():
+    """Leg mode must save searches, not change which road is chosen."""
+    parameters = {
+        "origin_lat": 1.1465, "origin_lng": 104.0125,
+        "destination_lat": 1.1318, "destination_lng": 104.0554,
+        "vehicle_type": "COMMUTER", "hour": 14, "now": WEEKDAY_1400,
+    }
+    full = optimize_free_route(**parameters)
+    leg = optimize_free_route(**parameters, leg_mode=True)
+
+    assert leg["route_geometry"] == full["route_geometry"]
+    assert leg["corridor"]["distance_km"] == full["corridor"]["distance_km"]
+    assert leg["alternative_routes"] == []
+    # A leg has no authority to defer; the journey owns that decision.
+    assert leg["optimal_departure"]["recommended"] == "DEPART_NOW"
+    assert leg["co2_saved_kg"] == 0.0
 
 
 def test_vercel_package_import_bootstraps_backend_modules():

@@ -20,7 +20,7 @@ import urllib.parse
 import urllib.request
 from typing import Any, Dict, List, Optional
 
-from services import multimodal_router, router
+from services import multimodal_router, router, tls
 
 # Corridor bounding box covering Singapore and Batam. Results outside the
 # supported island classifier are retained with ``supported_region = None`` so
@@ -97,7 +97,9 @@ def _nominatim_get(url: str) -> Optional[Any]:
                 url, headers={"User-Agent": _USER_AGENT, "Accept-Language": "en"},
             )
             _last_request_at = time.monotonic()
-            with urllib.request.urlopen(req, timeout=5) as resp:
+            with urllib.request.urlopen(
+                req, timeout=5, context=tls.default_context(),
+            ) as resp:
                 return json.loads(resp.read())
         except Exception as err:  # noqa: BLE001
             print(f"[geocoder] Nominatim unreachable: {err}")

@@ -20,7 +20,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple
 from zoneinfo import ZoneInfo
 
-from services import ferry_schedule, router
+from services import ferry_schedule, router, tls
 from services.service_contracts import ApprovedGraphOverrideSnapshot
 
 
@@ -229,7 +229,9 @@ def _osrm_route(
     url = f"{_OSRM_BASE_URL}/route/v1/driving/{coordinates}?{query}"
     try:
         request = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
-        with urllib.request.urlopen(request, timeout=4) as response:
+        with urllib.request.urlopen(
+            request, timeout=4, context=tls.default_context(),
+        ) as response:
             payload = json.loads(response.read())
     except Exception as error:  # noqa: BLE001 - provider failure is non-fatal
         print(f"[multimodal] OSRM unavailable: {error}")

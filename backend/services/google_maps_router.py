@@ -17,6 +17,8 @@ import urllib.parse
 import urllib.request
 from typing import Any, Dict, List, Optional
 
+from services import tls
+
 _USER_AGENT = "CrossFlowAI/3.0 (batam-singapore-hackathon-2026)"
 
 def get_api_key() -> str:
@@ -190,7 +192,9 @@ def get_google_route(origin: str, destination: str) -> Optional[Dict[str, Any]]:
 
     try:
         req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with urllib.request.urlopen(
+            req, timeout=5, context=tls.default_context(),
+        ) as resp:
             data = json.loads(resp.read().decode("utf-8"))
 
         if data.get("status") != "OK" or not data.get("routes"):

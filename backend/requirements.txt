@@ -5,3 +5,7 @@ uvicorn==0.52.1
 pydantic==2.13.4
 numpy==2.5.1
 scikit-learn==1.9.0
+# CA bundle for outbound HTTPS (OSRM, Nominatim, official ferry sources).
+# Hosts whose OpenSSL ships no trust store — python.org macOS builds, slim
+# containers — otherwise fail every request and silently degrade to estimates.
+certifi==2026.7.22

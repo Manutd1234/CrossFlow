@@ -36,6 +36,8 @@ from types import MappingProxyType
 from typing import Any, Callable, Iterable, Mapping, Optional, Sequence
 from urllib.parse import SplitResult, urlsplit, urlunsplit
 
+from services import tls
+
 
 SCHEMA_VERSION = 1
 EARTH_RADIUS_M = 6_371_008.8
@@ -485,7 +487,7 @@ class _PinnedHTTPSConnection(http.client.HTTPSConnection):
     """HTTPS connection whose TCP peer is the already-validated DNS answer."""
 
     def __init__(self, hostname: str, resolved_ip: str, *, timeout: float) -> None:
-        super().__init__(hostname, port=443, timeout=timeout, context=ssl.create_default_context())
+        super().__init__(hostname, port=443, timeout=timeout, context=tls.default_context())
         self._resolved_ip = resolved_ip
 
     def connect(self) -> None:

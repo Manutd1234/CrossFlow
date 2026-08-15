@@ -3,12 +3,12 @@ import { Header } from './components/app-shell/Header';
 import type { AppTab } from './components/app-shell/Navigation';
 
 import {
-  Corridor, DataSource, FerrySchedule, Fetched, LiveTrafficData,
+  Corridor, CorridorRoute, DataSource, FerrySchedule, Fetched, LiveTrafficData,
   FerryRefreshReport, FerryTimetableMetadata, OperationsSummary, PortStatus, Provenance,
   RouteLocation, RouteOptimizationResult, RoutePreference, VehicleType,
 } from './types';
 import {
-  fetchCorridors, fetchFerries, fetchOperationsSummary,
+  fetchCorridorRoutes, fetchCorridors, fetchFerries, fetchOperationsSummary,
   fetchLiveTraffic, fetchPortIntelligence, fetchRouteLocations,
   refreshOfficialFerrySources, scheduleInformedPortSeed,
 } from './services/api';
@@ -72,6 +72,7 @@ export function App() {
   const [portsError, setPortsError] = useState<string | null>(null);
   const [isFerryRefreshing, setIsFerryRefreshing] = useState(false);
   const [operationsSnapshot, setOperationsSnapshot] = useState<Fetched<OperationsSummary> | null>(null);
+  const [routes, setRoutes] = useState<CorridorRoute[]>([]);
   const [routeLocations, setRouteLocations] = useState<RouteLocation[]>(ROUTE_LOCATIONS);
   const [trafficSnapshot, setTrafficSnapshot] = useState<Fetched<LiveTrafficData> | null>(null);
 
@@ -180,11 +181,15 @@ export function App() {
     };
   }, []);
 
-  // The route-place catalogue is static, so fetch it once. Corridor-map route
-  // geometry is deliberately not requested: that view now shows weighted
-  // hotspot areas without distracting line overlays.
+  // Road geometry and the route-place catalogue are both static, so fetch each
+  // once. The corridor geometry is what lets the map draw the corridor the
+  // Corridor tab is reporting congestion for.
   useEffect(() => {
-    fetchRouteLocations().then(locations => setRouteLocations(locations.data));
+    Promise.all([fetchCorridorRoutes(), fetchRouteLocations()])
+      .then(([corridorRoutes, locations]) => {
+        setRoutes(corridorRoutes.data);
+        setRouteLocations(locations.data);
+      });
   }, []);
 
   const handleSelectCorridorAndSolve = useCallback((corridorId: string) => {
@@ -262,6 +267,7 @@ export function App() {
               {activeTab === 'map' && (
                 <MapView
                   corridors={corridors}
+                  routes={routes}
                   trafficSnapshot={trafficSnapshot}
                   onSelectCorridor={handleSelectCorridorAndSolve}
                 />

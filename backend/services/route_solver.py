@@ -1078,6 +1078,7 @@ def optimize_free_route(
     route_preference: str = "BALANCED",
     schedule_verified_at: Optional[str] = None,
     approved_override_snapshot: Optional[ApprovedGraphOverrideSnapshot] = None,
+    leg_mode: bool = False,
 ) -> Dict[str, Any]:
     """Optimise a local or Singapore-Batam route from free coordinates.
 
@@ -1087,6 +1088,12 @@ def optimize_free_route(
 
     `origin_name` / `destination_name` are display strings from the geocoder;
     they are optional and fall back to formatted coordinates.
+
+    `leg_mode` solves one leg of a longer multi-stop journey. A leg cannot
+    choose its own departure — that belongs to the journey — so the +30 minute
+    deferral comparison and the alternative-route set are skipped, cutting the
+    A* work per leg from three searches to one. Every other field keeps the
+    same meaning as a standalone route.
     """
     now = now or clock.now()
     _validate_time_inputs(hour, weather)
@@ -1211,32 +1218,45 @@ def optimize_free_route(
         raise ValueError("No drivable path connects those coordinates.")
     travel_now = round(_modeled_route_time_mins(route_now), 1)
 
-    later = planned_departure + timedelta(minutes=30)
-    surge_later, surge_source_later = ferry_schedule.ferry_surge_for_port(
-        dest_ferry_port,
-        later,
-        schedule_verified_at=schedule_verified_at,
-    )
-    prediction_later, congestion_estimate_later = (
-        _probabilistic_corridor_prediction(
-            later,
-            weather=weather,
-            corridor_idx=corridor_idx,
-            ferry_surge=surge_later,
-            surge_source=surge_source_later,
-            profile=profile,
+    if leg_mode:
+        # The journey owns the departure decision, so a leg reuses its own
+        # conditions rather than searching a +30 minute alternative it has no
+        # authority to act on.
+        later = planned_departure
+        surge_later, surge_source_later = surge, surge_source
+        prediction_later, congestion_estimate_later = (
+            prediction, congestion_estimate,
         )
-    )
-    zones_later = live_traffic.get_congestion_zones(later, weather=weather)
-    route_later = router.route_between_nodes(
-        src_node, dst_node, avoid_zones=zones_later,
-        origin_name=origin_display, destination_name=dest_display,
-        include_alternatives=False, vehicle_type=vehicle_type,
-        network_congestion_score=prediction_later["current_score"], weather=weather,
-        default_congestion_estimate=congestion_estimate_later,
-        route_preference=preference.key,
-        approved_override_snapshot=approved_override_snapshot,
-    ) or route_now
+        zones_later = zones
+        route_later = route_now
+    else:
+        later = planned_departure + timedelta(minutes=30)
+        surge_later, surge_source_later = ferry_schedule.ferry_surge_for_port(
+            dest_ferry_port,
+            later,
+            schedule_verified_at=schedule_verified_at,
+        )
+        prediction_later, congestion_estimate_later = (
+            _probabilistic_corridor_prediction(
+                later,
+                weather=weather,
+                corridor_idx=corridor_idx,
+                ferry_surge=surge_later,
+                surge_source=surge_source_later,
+                profile=profile,
+            )
+        )
+        zones_later = live_traffic.get_congestion_zones(later, weather=weather)
+        route_later = router.route_between_nodes(
+            src_node, dst_node, avoid_zones=zones_later,
+            origin_name=origin_display, destination_name=dest_display,
+            include_alternatives=False, vehicle_type=vehicle_type,
+            network_congestion_score=prediction_later["current_score"],
+            weather=weather,
+            default_congestion_estimate=congestion_estimate_later,
+            route_preference=preference.key,
+            approved_override_snapshot=approved_override_snapshot,
+        ) or route_now
     travel_later = round(_modeled_route_time_mins(route_later), 1)
 
     defer = (
@@ -1253,16 +1273,21 @@ def optimize_free_route(
     recommended_surge = surge_later if defer else surge
     recommended_surge_source = surge_source_later if defer else surge_source
     recommended_zones = zones_later if defer else zones
-    route = router.route_between_nodes(
-        src_node, dst_node, avoid_zones=recommended_zones,
-        origin_name=origin_display, destination_name=dest_display,
-        include_alternatives=True, vehicle_type=vehicle_type,
-        network_congestion_score=recommended_prediction["current_score"],
-        default_congestion_estimate=recommended_congestion_estimate,
-        weather=weather,
-        route_preference=preference.key,
-        approved_override_snapshot=approved_override_snapshot,
-    ) or (route_later if defer else route_now)
+    if leg_mode:
+        # Without a deferral or an alternative set to choose from, the
+        # recommended route is by construction the one already solved above.
+        route = route_now
+    else:
+        route = router.route_between_nodes(
+            src_node, dst_node, avoid_zones=recommended_zones,
+            origin_name=origin_display, destination_name=dest_display,
+            include_alternatives=True, vehicle_type=vehicle_type,
+            network_congestion_score=recommended_prediction["current_score"],
+            default_congestion_estimate=recommended_congestion_estimate,
+            weather=weather,
+            route_preference=preference.key,
+            approved_override_snapshot=approved_override_snapshot,
+        ) or (route_later if defer else route_now)
     recommended_travel = round(_modeled_route_time_mins(route), 1)
 
     # Local OSM is the guaranteed critical path. A complete external provider
@@ -1469,4 +1494,498 @@ def optimize_free_route(
             "Destination is not a ferry port; showing nearest Batam Centre departures for reference."
         )
 
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Multi-stop journeys
+# ---------------------------------------------------------------------------
+
+# Every leg runs a full A* search over the committed 115k-node graph, so the
+# request cost grows linearly with the stop count. The cap keeps the worst
+# case bounded rather than letting one request occupy a worker indefinitely.
+MAX_MULTI_STOP_COUNT = 8
+MAX_MULTI_STOP_DWELL_MINS = 720.0
+
+
+def _normalized_multi_stops(stops: Any) -> List[Dict[str, Any]]:
+    """Validate the requested stop list and fill in display names."""
+    if not isinstance(stops, (list, tuple)):
+        raise ValueError("stops must be a list of coordinates.")
+    if len(stops) < 3:
+        raise ValueError(
+            "A multi-stop journey needs at least three stops: an origin, one "
+            "intermediate destination, and a final destination. Use the "
+            "single-route solver for a two-point journey."
+        )
+    if len(stops) > MAX_MULTI_STOP_COUNT:
+        raise ValueError(
+            f"A multi-stop journey supports at most {MAX_MULTI_STOP_COUNT} "
+            f"stops; {len(stops)} were requested."
+        )
+
+    normalized: List[Dict[str, Any]] = []
+    for index, stop in enumerate(stops):
+        if not isinstance(stop, dict):
+            raise ValueError(f"Stop {index + 1} must be an object with lat and lng.")
+        try:
+            lat = float(stop["lat"])
+            lng = float(stop["lng"])
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError(
+                f"Stop {index + 1} must carry numeric lat and lng."
+            ) from error
+        if not math.isfinite(lat) or not math.isfinite(lng):
+            raise ValueError(f"Stop {index + 1} has non-finite coordinates.")
+        region = multimodal_router.location_region(lat, lng)
+        if region is None:
+            raise ValueError(
+                f"Stop {index + 1} is outside the supported Singapore-Batam "
+                "service area."
+            )
+        dwell = stop.get("dwell_mins", 0.0) or 0.0
+        try:
+            dwell = float(dwell)
+        except (TypeError, ValueError) as error:
+            raise ValueError(
+                f"Stop {index + 1} has a non-numeric dwell_mins."
+            ) from error
+        if not math.isfinite(dwell) or dwell < 0:
+            raise ValueError(f"Stop {index + 1} has a negative dwell_mins.")
+        if dwell > MAX_MULTI_STOP_DWELL_MINS:
+            raise ValueError(
+                f"Stop {index + 1} exceeds the {MAX_MULTI_STOP_DWELL_MINS:.0f} "
+                "minute dwell limit."
+            )
+        name = stop.get("name")
+        normalized.append({
+            "lat": lat,
+            "lng": lng,
+            "name": str(name) if name else f"{lat:.5f}, {lng:.5f}",
+            "region": region,
+            # The origin is departed from, not waited at; the final stop ends
+            # the journey. Dwell on either would inflate the ETA.
+            "dwell_mins": round(dwell, 1) if 0 < index < len(stops) - 1 else 0.0,
+        })
+    return normalized
+
+
+def _two_opt_ordered(
+    stops: List[Dict[str, Any]],
+    cost: Any,
+) -> List[Dict[str, Any]]:
+    """Nearest-neighbour seed refined by 2-opt, with both ends pinned."""
+    origin, destination = stops[0], stops[-1]
+    remaining = list(stops[1:-1])
+
+    ordered = [origin]
+    while remaining:
+        current = ordered[-1]
+        nearest = min(remaining, key=lambda stop: cost(current, stop))
+        remaining.remove(nearest)
+        ordered.append(nearest)
+    ordered.append(destination)
+
+    def total(route: List[Dict[str, Any]]) -> float:
+        return sum(cost(a, b) for a, b in zip(route, route[1:]))
+
+    best = total(ordered)
+    improved = True
+    while improved:
+        improved = False
+        # Endpoints are fixed, so only the interior segment may be reversed.
+        for i in range(1, len(ordered) - 2):
+            for j in range(i + 1, len(ordered) - 1):
+                candidate = ordered[:i] + ordered[i:j + 1][::-1] + ordered[j + 1:]
+                candidate_cost = total(candidate)
+                if candidate_cost < best - 1e-9:
+                    ordered, best = candidate, candidate_cost
+                    improved = True
+    return ordered
+
+
+def _ordered_multi_stops(
+    stops: List[Dict[str, Any]],
+    optimize_order: bool,
+) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """Return the visiting order plus an honest description of how it was picked."""
+    if not optimize_order or len(stops) < 4:
+        return stops, {
+            "requested": optimize_order,
+            "applied": False,
+            "method": "requested_order",
+            "reason": (
+                "Fewer than two intermediate stops, so the order is already "
+                "determined." if optimize_order else
+                "The requested stop order was used as given."
+            ),
+        }
+
+    regions = {stop["region"] for stop in stops}
+    if len(regions) > 1:
+        # Reordering across the crossing would shuffle sailings, terminal
+        # pairs and customs handling, none of which this heuristic models.
+        return stops, {
+            "requested": True,
+            "applied": False,
+            "method": "requested_order",
+            "reason": (
+                "Stops span Singapore and Batam. Reordering is not applied "
+                "across a ferry crossing; the requested order was kept."
+            ),
+        }
+
+    def straight_line_m(a: Dict[str, Any], b: Dict[str, Any]) -> float:
+        return router.haversine_m((a["lat"], a["lng"]), (b["lat"], b["lng"]))
+
+    ordered = _two_opt_ordered(stops, straight_line_m)
+    changed = [stop["name"] for stop in ordered] != [stop["name"] for stop in stops]
+    return ordered, {
+        "requested": True,
+        "applied": changed,
+        "method": "nearest_neighbour_2opt_straight_line",
+        "reason": (
+            "Intermediate stops were ordered by straight-line proximity."
+            if changed else
+            "The requested order already minimised straight-line travel."
+        ),
+        "limitations": (
+            "Ordering uses straight-line distance between stops, which is "
+            "cheap enough to run per request. It does not account for road "
+            "distance, one-way streets, or congestion, so a different order "
+            "may be faster on the road. Each leg's reported distance and time "
+            "are solved on the road graph."
+        ),
+    }
+
+
+def _combined_multi_stop_navigation(
+    legs: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Concatenate per-leg maneuvers into one continuously numbered list."""
+    maneuvers: List[Dict[str, Any]] = []
+    landmarks: List[Any] = []
+    traffic_lights = 0
+    narratives: List[str] = []
+    data_sources: List[str] = []
+    cumulative_m = 0.0
+
+    for leg_index, leg in enumerate(legs):
+        navigation = leg.get("navigation") or {}
+        leg_maneuvers = navigation.get("maneuvers") or []
+        leg_distance_m = float(leg.get("distance_km") or 0.0) * 1000.0
+        is_last_leg = leg_index == len(legs) - 1
+        for maneuver in leg_maneuvers:
+            step = copy.deepcopy(maneuver)
+            # An intermediate ARRIVE is a scheduled stop, not the journey end.
+            if not is_last_leg and str(step.get("type", "")).upper() == "ARRIVE":
+                step["type"] = "WAYPOINT"
+                step["icon"] = "landmark"
+                step["instruction"] = (
+                    f"Arrive at stop {leg_index + 2}: {leg.get('to_name')}"
+                )
+            step["leg_index"] = leg_index
+            step["cumulative_distance_m"] = round(
+                cumulative_m + float(step.get("cumulative_distance_m") or 0.0), 1,
+            )
+            step["step"] = len(maneuvers) + 1
+            maneuvers.append(step)
+        cumulative_m += leg_distance_m
+        landmarks.extend(navigation.get("landmarks_along_route") or [])
+        traffic_lights += int(navigation.get("traffic_lights_count") or 0)
+        narrative = navigation.get("route_narrative_words")
+        if narrative:
+            narratives.append(str(narrative))
+        source = navigation.get("data_source")
+        if source and source not in data_sources:
+            data_sources.append(str(source))
+
+    return {
+        "schema_version": 1,
+        "data_source": "+".join(data_sources) if data_sources else "openstreetmap",
+        "maneuvers": maneuvers,
+        "landmarks_along_route": landmarks,
+        "traffic_lights_count": traffic_lights,
+        "route_narrative_words": " ".join(narratives),
+    }
+
+
+def _combined_multi_stop_geometry(
+    legs: List[Dict[str, Any]],
+) -> List[List[float]]:
+    """Join leg polylines, dropping the duplicated point at each stop."""
+    combined: List[List[float]] = []
+    for leg in legs:
+        geometry = leg.get("route_geometry") or []
+        if not geometry:
+            continue
+        if combined and combined[-1] == list(geometry[0]):
+            combined.extend([list(point) for point in geometry[1:]])
+        else:
+            combined.extend([list(point) for point in geometry])
+    return combined
+
+
+def optimize_multi_stop_route(
+    stops: Any,
+    vehicle_type: str,
+    hour: int = 14,
+    weather: int = 0,
+    now: Optional[datetime] = None,
+    route_preference: str = "BALANCED",
+    optimize_order: bool = False,
+    schedule_verified_at: Optional[str] = None,
+    approved_override_snapshot: Optional[ApprovedGraphOverrideSnapshot] = None,
+) -> Dict[str, Any]:
+    """Chain three or more stops into one scheduled journey.
+
+    Each consecutive pair is solved by :func:`optimize_free_route` in leg mode,
+    so a leg through Batam uses the committed OSM graph and a leg touching
+    Singapore uses the multimodal composer — the same engines, contracts and
+    limitations as a two-point route.
+
+    Legs are solved in order because each one departs when the previous leg
+    arrives plus its dwell, and the congestion model is evaluated at that
+    departure hour. The journey-level totals are the sum of the legs; nothing
+    here re-estimates a leg independently.
+    """
+    now = now or clock.now()
+    _validate_time_inputs(hour, weather)
+    profile = _validated_profile(vehicle_type)
+    preference = _validated_preference(route_preference)
+
+    normalized = _normalized_multi_stops(stops)
+    ordered, order_metadata = _ordered_multi_stops(normalized, optimize_order)
+
+    if (
+        len({stop["region"] for stop in ordered}) > 1
+        and profile.key in PASSENGER_FERRY_INCOMPATIBLE_VEHICLES
+    ):
+        raise ValueError(
+            "Light and heavy trucks cannot be scheduled on the published "
+            "passenger-ferry services used by this planner. Local road routing "
+            "remains available; cross-border freight requires a cargo port, "
+            "roll-on/roll-off operator, or an authorised logistics-partner feed."
+        )
+
+    journey_departure = resolve_planned_departure(hour, now)
+    leg_departure = journey_departure
+    legs: List[Dict[str, Any]] = []
+    shortcuts_used: List[Any] = []
+    overrides_used: List[Any] = []
+    total_travel_mins = 0.0
+    total_dwell_mins = 0.0
+    total_distance_km = 0.0
+    total_access_km = 0.0
+    total_emissions_kg = 0.0
+    total_customs_mins = 0.0
+
+    for index in range(len(ordered) - 1):
+        start, end = ordered[index], ordered[index + 1]
+        leg_result = optimize_free_route(
+            origin_lat=start["lat"],
+            origin_lng=start["lng"],
+            destination_lat=end["lat"],
+            destination_lng=end["lng"],
+            vehicle_type=profile.key,
+            hour=leg_departure.hour,
+            weather=weather,
+            now=now,
+            origin_name=start["name"],
+            destination_name=end["name"],
+            route_preference=preference.key,
+            schedule_verified_at=schedule_verified_at,
+            approved_override_snapshot=approved_override_snapshot,
+            leg_mode=True,
+        )
+
+        travel_mins = float(leg_result.get("estimated_travel_time_mins") or 0.0)
+        customs_mins = float(leg_result.get("customs_buffer_mins") or 0.0)
+        access_mins = float(leg_result.get("access_time_mins") or 0.0)
+        leg_elapsed = travel_mins + customs_mins + access_mins
+        leg_arrival = leg_departure + timedelta(minutes=leg_elapsed)
+        dwell_mins = float(end["dwell_mins"])
+
+        legs.append({
+            "leg_index": index,
+            "from_name": start["name"],
+            "to_name": end["name"],
+            "from": {"lat": start["lat"], "lng": start["lng"]},
+            "to": {"lat": end["lat"], "lng": end["lng"]},
+            "route_type": leg_result.get("route_type"),
+            "distance_km": float(leg_result["corridor"]["distance_km"]),
+            "estimated_travel_time_mins": round(travel_mins, 1),
+            "customs_buffer_mins": customs_mins,
+            "access_time_mins": access_mins,
+            "total_eta_mins": round(leg_elapsed, 1),
+            "departure": clock.iso(leg_departure),
+            "arrival": clock.iso(leg_arrival),
+            "dwell_mins": dwell_mins,
+            "co2_emissions_kg": float(leg_result.get("co2_emissions_kg") or 0.0),
+            "route_geometry": leg_result.get("route_geometry", []),
+            "route_data_source": leg_result.get("route_data_source"),
+            "navigation": leg_result.get("navigation"),
+            "congestion_prediction": leg_result.get("congestion_prediction"),
+            "routing_cost_breakdown": leg_result.get("routing_cost_breakdown"),
+            "snap_info": leg_result.get("snap_info"),
+            "avoided_congested_zones": leg_result.get("avoided_congested_zones", []),
+            "route_legs": leg_result.get("route_legs"),
+        })
+        # Learned-shortcut and approved-override provenance is per edge, so the
+        # journey has to carry the union of what its legs actually traversed;
+        # the service audit reads it off the top-level result.
+        for shortcut in leg_result.get("shortcuts_used") or ():
+            shortcuts_used.append(shortcut)
+        for override in leg_result.get("approved_graph_overrides_used") or ():
+            overrides_used.append(override)
+
+        total_travel_mins += travel_mins
+        total_customs_mins += customs_mins
+        total_access_km += float(leg_result.get("access_distance_km") or 0.0)
+        total_distance_km += float(leg_result["corridor"]["distance_km"])
+        total_emissions_kg += float(leg_result.get("co2_emissions_kg") or 0.0)
+        total_dwell_mins += dwell_mins
+        leg_departure = leg_arrival + timedelta(minutes=dwell_mins)
+
+    journey_arrival = leg_departure
+    total_eta_mins = round(
+        (journey_arrival - journey_departure).total_seconds() / 60.0, 1,
+    )
+    is_multimodal = any(
+        leg["route_type"] == "MULTIMODAL_FERRY_ROUTE" for leg in legs
+    )
+    geometry = _combined_multi_stop_geometry(legs)
+    leg_sources = []
+    for leg in legs:
+        source = leg.get("route_data_source")
+        if source and source not in leg_sources:
+            leg_sources.append(str(source))
+
+    final_stop = ordered[-1]
+    result: Dict[str, Any] = {
+        "route_type": (
+            "MULTIMODAL_MULTI_STOP_ROUTE" if is_multimodal
+            else "MULTI_STOP_ROUTE"
+        ),
+        "corridor": {
+            "id": "multi:" + ":".join(
+                f"{stop['lat']:.5f},{stop['lng']:.5f}" for stop in ordered
+            ),
+            "name": " → ".join(stop["name"] for stop in ordered),
+            "origin": f"{ordered[0]['lat']:.5f}, {ordered[0]['lng']:.5f}",
+            "destination": f"{final_stop['lat']:.5f}, {final_stop['lng']:.5f}",
+            "distance_km": round(total_distance_km, 2),
+            "straight_line_km": round(
+                sum(
+                    router.haversine_m(
+                        (a["lat"], a["lng"]), (b["lat"], b["lng"]),
+                    )
+                    for a, b in zip(ordered, ordered[1:])
+                ) / 1000.0,
+                2,
+            ),
+            "stop_count": len(ordered),
+            "leg_count": len(legs),
+            "key_checkpoints": [stop["name"] for stop in ordered],
+        },
+        "stops": [
+            {
+                "sequence": index + 1,
+                "name": stop["name"],
+                "lat": stop["lat"],
+                "lng": stop["lng"],
+                "region": stop["region"],
+                "dwell_mins": stop["dwell_mins"],
+                "role": (
+                    "ORIGIN" if index == 0
+                    else "DESTINATION" if index == len(ordered) - 1
+                    else "WAYPOINT"
+                ),
+            }
+            for index, stop in enumerate(ordered)
+        ],
+        "stop_order_optimization": order_metadata,
+        "requested_origin": {
+            "name": ordered[0]["name"],
+            "lat": ordered[0]["lat"],
+            "lng": ordered[0]["lng"],
+        },
+        "requested_destination": {
+            "name": final_stop["name"],
+            "lat": final_stop["lat"],
+            "lng": final_stop["lng"],
+        },
+        "vehicle_type": profile.key,
+        "vehicle_profile": router.vehicle_profile_payload(profile),
+        "route_preference": preference.key,
+        "route_preference_profile": router.route_preference_payload(preference),
+        "planned_departure": clock.iso(journey_departure),
+        "estimated_arrival": clock.iso(journey_arrival),
+        "estimated_travel_time_mins": round(total_travel_mins, 1),
+        "customs_buffer_mins": round(total_customs_mins, 1),
+        "access_distance_km": round(total_access_km, 3),
+        "dwell_time_mins": round(total_dwell_mins, 1),
+        "total_eta_mins": total_eta_mins,
+        "co2_emissions_kg": round(total_emissions_kg, 2),
+        "co2_saved_kg": 0.0,
+        "legs": legs,
+        "route_geometry": geometry,
+        "route_data_source": (
+            "+".join(leg_sources) if leg_sources else "openstreetmap"
+        ),
+        "navigation": _combined_multi_stop_navigation(legs),
+        "congestion_prediction": legs[0].get("congestion_prediction") if legs else None,
+        "optimal_departure": {
+            # Deferral is a whole-journey decision and every leg after the
+            # first departs at a time this solver derived, not one the traveller
+            # picks, so no per-leg deferral is offered.
+            "recommended": "DEPART_NOW",
+            "time_saved_mins": 0.0,
+            "reason": (
+                "Multi-stop journeys are scheduled from the requested "
+                "departure; each leg is modelled at the hour it actually "
+                "departs."
+            ),
+        },
+        "alternative_routes": [],
+        "alternatives_note": (
+            "Alternative paths are offered for two-point routes only; a "
+            "multi-stop journey is reported as the scheduled chain of legs."
+        ),
+        "limitations": (
+            "Leg times come from the same modelled congestion used by the "
+            "two-point solver. Dwell times are the caller's own inputs and are "
+            "not validated against opening hours, loading bays, or driver "
+            "break rules."
+        ),
+    }
+
+    if shortcuts_used:
+        result["shortcuts_used"] = shortcuts_used
+    if overrides_used:
+        result["approved_graph_overrides_used"] = overrides_used
+
+    port_stop = final_stop
+    arrival_port = None
+    for location in ROUTE_LOCATIONS:
+        if not location.get("ferry_port"):
+            continue
+        if router.haversine_m(
+            (location["lat"], location["lng"]),
+            (port_stop["lat"], port_stop["lng"]),
+        ) < FERRY_TERMINAL_MATCH_M:
+            arrival_port = location["ferry_port"]
+            break
+    result["next_matching_ferries"] = ferry_schedule.next_sailings_after(
+        journey_arrival,
+        limit=3,
+        port=arrival_port or "Batam Centre",
+        now=now,
+        schedule_verified_at=schedule_verified_at,
+    )
+    if not arrival_port:
+        result["ferry_connection_note"] = (
+            "The final stop is not a ferry port; showing nearest Batam Centre "
+            "departures for reference."
+        )
     return result

@@ -13,6 +13,8 @@ import urllib.error
 import urllib.request
 from typing import Any, Dict, List
 
+from services import tls
+
 
 COMPUTE_ROUTES_URL = "https://routes.googleapis.com/directions/v2:computeRoutes"
 GOOGLE_MAPS_POLICY_URL = (
@@ -193,7 +195,9 @@ def benchmark_routes(
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=TIMEOUT_S) as response:
+        with urllib.request.urlopen(
+            request, timeout=TIMEOUT_S, context=tls.default_context(),
+        ) as response:
             raw = response.read(MAX_RESPONSE_BYTES + 1)
         if len(raw) > MAX_RESPONSE_BYTES:
             raise GoogleBenchmarkUnavailable("Google Routes response exceeded the size limit.")
