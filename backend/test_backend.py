@@ -9,6 +9,7 @@ via clock.frozen() for code that reads the clock itself. Frozen datetimes carry
 an explicit +07:00 so the suite passes regardless of the laptop's timezone.
 """
 
+import contextlib
 import json
 import math
 import os
@@ -3734,7 +3735,10 @@ def test_history_seed_migration_replaces_only_obsolete_synthetic_rows():
     with tempfile.TemporaryDirectory(prefix="crossflow-history-migration-") as directory:
         path = os.path.join(directory, "history.db")
         preserved_ts = int((fixed_now - timedelta(hours=1)).timestamp())
-        with sqlite3.connect(path) as conn:
+        # closing() is what actually releases the file handle: sqlite3's own
+        # context manager commits the transaction but leaves the connection
+        # open, and Windows refuses to delete the temp directory underneath it.
+        with contextlib.closing(sqlite3.connect(path)) as conn, conn:
             conn.execute("""
                 CREATE TABLE observations (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -3805,7 +3809,7 @@ def test_history_current_seed_fills_missing_corridor_without_replacing_others():
         ).fetchall()
         original_store.close()
 
-        with sqlite3.connect(path) as conn:
+        with contextlib.closing(sqlite3.connect(path)) as conn, conn:
             conn.execute(
                 "DELETE FROM observations "
                 "WHERE source = 'synthetic' AND corridor = 'corridor-5'"
