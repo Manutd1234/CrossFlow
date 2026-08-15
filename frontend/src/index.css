@@ -358,13 +358,11 @@ h1, h2, h3, h4, h5, h6 {
   position: relative;
   top: auto;
   z-index: auto;
+  width: 100%;
   min-width: 0;
   min-height: 0;
-  flex: 1 1 0;
-  max-width: min(
-    calc(100vw - var(--workspace-gutter) - var(--workspace-gutter)),
-    calc(var(--content-max) - var(--workspace-gutter) - var(--workspace-gutter))
-  );
+  flex: 1 1 1120px;
+  max-width: 1120px;
 }
 
 .app-topbar > * {
@@ -642,14 +640,26 @@ h1, h2, h3, h4, h5, h6 {
   overflow: visible;
 }
 
-/* The rule above lets the workspace grow with its content, which the newer
-   scrolling pages rely on. The corridor map does not: its panel is sized at
-   height:100%, so with no bounded ancestor it stretches to the full height of
-   the 30-item hotspot list and the visible viewport ends up far off Batam.
-   Give that one panel an explicit viewport-relative height instead. */
+/* The map and route-planning screens consume the remaining shell height rather
+   than making the workspace itself scroll. Their panels own any overflow. */
+.app-workspace:has(.map-view-layout),
+.app-workspace:has(.route-planner-layout) {
+  overflow: hidden;
+}
+
+.app-workspace:has(.map-view-layout) .app-main,
+.app-workspace:has(.map-view-layout) .app-view-content,
+.app-workspace:has(.route-planner-layout) .app-main,
+.app-workspace:has(.route-planner-layout) .app-view-content {
+  min-height: 0;
+  flex: 1 1 0;
+  overflow: hidden;
+}
+
+/* The rule above lets most workspaces grow with their content. The congestion
+   map instead follows the bounded height established by its map workspace. */
 .map-view-layout .map-canvas-panel {
-  height: clamp(480px, 70vh, 720px);
-  height: clamp(480px, 70svh, 720px);
+  height: var(--map-workspace-height);
 }
 
 .app-screen-layout {
@@ -687,6 +697,9 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .map-view-layout {
+  --map-workspace-height: 100%;
+
+  height: var(--map-workspace-height);
   grid-template-areas:
     "map rail"
     "map sidebar";
@@ -1908,6 +1921,7 @@ h1, h2, h3, h4, h5, h6 {
   grid-area: sidebar;
   min-height: 0;
   margin-top: 0;
+  overflow: hidden;
 }
 
 .map-view-layout > .workspace-subtabs__panel:not([hidden]) {
@@ -1973,6 +1987,7 @@ h1, h2, h3, h4, h5, h6 {
   flex: 1;
   gap: 9px;
   overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
 .hotspot-card {
@@ -2061,10 +2076,11 @@ h1, h2, h3, h4, h5, h6 {
 .map-corridor-stack {
   width: 100%;
   min-height: 0;
-  display: flex;
+  display: grid;
   flex: 1;
-  flex-direction: column;
+  grid-template-rows: repeat(2, minmax(0, 1fr));
   gap: 16px;
+  overflow: hidden;
 }
 
 .corridor-feed-panel {
@@ -2092,6 +2108,7 @@ h1, h2, h3, h4, h5, h6 {
   flex-direction: column;
   gap: 10px;
   overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
 .corridor-feed-item {
@@ -2170,10 +2187,13 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .selected-corridor-panel {
+  min-height: 0;
   padding: 16px;
   display: flex;
   flex-direction: column;
   gap: 8px;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
 .selected-corridor-panel__header {
@@ -2267,7 +2287,7 @@ h1, h2, h3, h4, h5, h6 {
 
 .map-canvas-panel {
   grid-area: map;
-  height: 100%;
+  height: var(--map-workspace-height);
   position: relative;
   padding: 4px;
   overflow: hidden;
@@ -2501,6 +2521,10 @@ h1, h2, h3, h4, h5, h6 {
   }
 
   .map-view-layout {
+    --map-workspace-height: clamp(560px, 68vh, 700px);
+    --map-workspace-height: clamp(560px, 68svh, 700px);
+
+    height: auto;
     min-height: 0;
     grid-template-areas:
       "map"
@@ -2511,23 +2535,34 @@ h1, h2, h3, h4, h5, h6 {
   }
 
   .map-canvas-panel {
-    height: clamp(560px, 68svh, 700px);
+    height: var(--map-workspace-height);
   }
 
-  .hotspot-watch-panel {
+  .map-view-layout > .workspace-subtabs__panel {
     width: 100%;
     max-width: 100%;
-    height: 500px;
-    min-height: 500px;
-    max-height: 500px;
+    height: var(--map-workspace-height);
   }
 
   .hotspot-watch__list {
     max-height: none;
   }
 
-  .corridor-feed-panel {
-    max-height: 330px;
+}
+
+@media (max-width: 1000px) {
+  .app-workspace:has(.map-view-layout),
+  .app-workspace:has(.route-planner-layout) {
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  .app-workspace:has(.map-view-layout) .app-main,
+  .app-workspace:has(.map-view-layout) .app-view-content,
+  .app-workspace:has(.route-planner-layout) .app-main,
+  .app-workspace:has(.route-planner-layout) .app-view-content {
+    flex: 0 0 auto;
+    overflow: visible;
   }
 }
 
@@ -3976,6 +4011,11 @@ a:focus-visible {
   grid-template-rows: auto minmax(0, 1fr);
 }
 
+.route-planner-layout--driver {
+  grid-template-areas: "sidebar result";
+  grid-template-rows: minmax(0, 1fr);
+}
+
 .route-planner-layout > .workspace-subtabs__rail {
   grid-area: mode;
 }
@@ -4637,6 +4677,12 @@ a:focus-visible {
     grid-template-rows: auto;
   }
 
+  .route-planner-layout--driver {
+    grid-template-areas:
+      "sidebar"
+      "result";
+  }
+
 }
 
 @media (max-width: 760px) {
@@ -4836,9 +4882,11 @@ a:focus-visible {
   flex-direction: column;
   gap: 20px;
   min-height: 0;
+  padding-bottom: 6px;
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 @media (max-width: 1000px) {
@@ -5214,7 +5262,68 @@ a:focus-visible {
   flex-direction: column;
   gap: 16px;
   min-height: 520px;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.route-code-lookup {
+  gap: 16px;
+  overflow: visible;
+}
+
+.route-code-lookup__heading {
+  display: grid;
+  gap: 8px;
+}
+
+.route-code-lookup__title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.route-code-lookup__title-row > svg {
+  flex: 0 0 auto;
+  color: var(--accent-cyan);
+}
+
+.route-code-lookup__heading h3,
+.route-code-lookup__heading p {
+  margin: 0;
+}
+
+.route-code-lookup__heading p {
+  color: var(--text-secondary);
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+.route-code-lookup__field {
+  display: grid;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.route-code-lookup__field input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 12px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+  color: var(--text-primary);
+  font: 700 1.05rem/1.2 var(--font-mono, monospace);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.route-code-lookup__field input:focus {
+  border-color: var(--accent-cyan);
+  outline: 2px solid color-mix(in srgb, var(--accent-cyan) 22%, transparent);
+  outline-offset: 2px;
 }
 
 .route-planner-layout .route-result-tabs {
@@ -5229,6 +5338,7 @@ a:focus-visible {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
 .route-planner-layout .route-result-tabs > #route-result-panel-1 {

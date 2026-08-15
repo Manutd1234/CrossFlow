@@ -22,6 +22,7 @@ import {
 } from './data/mockData';
 
 const POLL_INTERVAL_MS = 30_000;
+const DRIVER_TABS: readonly AppTab[] = ['map', 'route'];
 
 const MapView = lazy(() => import('./components/corridor-map/MapView').then(module => ({ default: module.MapView })));
 const RouteOptimizer = lazy(() => import('./components/route-planner/RouteOptimizer').then(module => ({ default: module.RouteOptimizer })));
@@ -247,6 +248,11 @@ export function App() {
   // resolve a role from it.
   const signInAvailable = supabaseConfigured()
     && (authStatus === null || authStatus.enabled);
+  const driverAccess = isGuest || identity?.role.toLowerCase() === 'driver';
+
+  const visibleActiveTab: AppTab = driverAccess && activeTab === 'analytics'
+    ? 'map'
+    : activeTab;
 
   const continueAsGuest = useCallback(() => {
     window.sessionStorage?.setItem('crossflow.guest', '1');
@@ -292,7 +298,7 @@ export function App() {
     }
   }, []);
 
-  const activeView = VIEW_META[activeTab];
+  const activeView = VIEW_META[visibleActiveTab];
   const operations = operationsSnapshot?.data ?? MOCK_OPERATIONS;
 
   return (
@@ -318,8 +324,9 @@ export function App() {
         onOpenSignIn={() => setIsSignInOpen(true)}
         identity={identity}
         signInAvailable={signInAvailable}
-        activeTab={activeTab}
+        activeTab={visibleActiveTab}
         setActiveTab={setActiveTab}
+        allowedTabs={driverAccess ? DRIVER_TABS : undefined}
         dataSource={dataSource}
         provenance={provenance}
         lastUpdated={lastUpdated}
@@ -330,7 +337,7 @@ export function App() {
           id="main-content"
           className="app-main"
           role="tabpanel"
-          aria-labelledby={`workspace-tab-${activeTab}`}
+          aria-labelledby={`workspace-tab-${visibleActiveTab}`}
           tabIndex={-1}
         >
           <div className="app-view-heading">
@@ -343,7 +350,7 @@ export function App() {
 
           <section className="app-view-content" aria-labelledby="active-view-title">
             <Suspense fallback={<LoadingPanel />}>
-              {activeTab === 'map' && (
+              {visibleActiveTab === 'map' && (
                 <MapView
                   corridors={corridors}
                   routes={routes}
@@ -352,7 +359,7 @@ export function App() {
                 />
               )}
 
-              {activeTab === 'route' && (
+              {visibleActiveTab === 'route' && (
                 <RouteOptimizer
                   locations={routeLocations}
                   originId={routeOriginId}
@@ -371,10 +378,12 @@ export function App() {
                   setWeather={setWeather}
                   hour={departureHour}
                   setHour={setDepartureHour}
+                  driverAccess={driverAccess}
+                  accessToken={session?.accessToken ?? null}
                 />
               )}
 
-              {activeTab === 'analytics' && (
+              {visibleActiveTab === 'analytics' && (
                 <div className="analytics-workspace-stack">
                   <OperationsAnalytics
                     operations={operations}

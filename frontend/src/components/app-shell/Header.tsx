@@ -12,6 +12,7 @@ interface HeaderProps {
   signInAvailable: boolean;
   activeTab: AppTab;
   setActiveTab: (tab: AppTab) => void;
+  allowedTabs?: readonly AppTab[];
   dataSource: DataSource;
   provenance?: Provenance;
   lastUpdated?: string;
@@ -57,6 +58,7 @@ export function Header({
   signInAvailable,
   activeTab,
   setActiveTab,
+  allowedTabs,
   dataSource,
   provenance,
   lastUpdated,
@@ -86,7 +88,7 @@ export function Header({
               <strong>Batam ↔ Singapore</strong>
             </span>
           </div>
-          <Navigation activeTab={activeTab} setActiveTab={setActiveTab} />
+          <Navigation activeTab={activeTab} setActiveTab={setActiveTab} allowedTabs={allowedTabs} />
           <div className="app-topbar-scope">
             <span className="app-topbar-scope-dot" aria-hidden="true" />
             <span>
@@ -129,17 +131,9 @@ export function Header({
                 : 'Sign in to CrossFlow'}
               title={identity ? 'Account' : 'Sign in'}
             >
-              {identity ? (
-                <>
-                  <ShieldCheck size={ICON_SIZE.medium} aria-hidden="true" />
-                  <span className="app-signin-button__role">{identity.role}</span>
-                </>
-              ) : (
-                <>
-                  <LogIn size={ICON_SIZE.medium} aria-hidden="true" />
-                  <span className="app-signin-button__label">Sign in</span>
-                </>
-              )}
+              {identity
+                ? <ShieldCheck size={ICON_SIZE.medium} aria-hidden="true" />
+                : <LogIn size={ICON_SIZE.medium} aria-hidden="true" />}
             </button>
           ) : null}
         </div>

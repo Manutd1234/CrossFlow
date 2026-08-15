@@ -7,6 +7,7 @@ export type AppTab = 'map' | 'route' | 'analytics';
 interface NavigationProps {
   activeTab: AppTab;
   setActiveTab: (tab: AppTab) => void;
+  allowedTabs?: readonly AppTab[];
 }
 
 const NAV_ITEMS = [
@@ -35,8 +36,11 @@ const NAV_ITEMS = [
   icon: typeof Map;
 }>;
 
-export function Navigation({ activeTab, setActiveTab }: NavigationProps) {
+export function Navigation({ activeTab, setActiveTab, allowedTabs }: NavigationProps) {
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const visibleItems = allowedTabs
+    ? NAV_ITEMS.filter((item) => allowedTabs.includes(item.id))
+    : NAV_ITEMS;
 
   const handleTabKeyDown = (
     event: KeyboardEvent<HTMLButtonElement>,
@@ -46,23 +50,23 @@ export function Navigation({ activeTab, setActiveTab }: NavigationProps) {
 
     switch (event.key) {
       case 'ArrowRight':
-        nextIndex = (currentIndex + 1) % NAV_ITEMS.length;
+        nextIndex = (currentIndex + 1) % visibleItems.length;
         break;
       case 'ArrowLeft':
-        nextIndex = (currentIndex - 1 + NAV_ITEMS.length) % NAV_ITEMS.length;
+        nextIndex = (currentIndex - 1 + visibleItems.length) % visibleItems.length;
         break;
       case 'Home':
         nextIndex = 0;
         break;
       case 'End':
-        nextIndex = NAV_ITEMS.length - 1;
+        nextIndex = visibleItems.length - 1;
         break;
       default:
         return;
     }
 
     event.preventDefault();
-    const nextItem = NAV_ITEMS[nextIndex];
+    const nextItem = visibleItems[nextIndex];
     setActiveTab(nextItem.id);
     tabRefs.current[nextIndex]?.focus();
   };
@@ -78,7 +82,7 @@ export function Navigation({ activeTab, setActiveTab }: NavigationProps) {
         aria-label="Workspace views"
         aria-orientation="horizontal"
       >
-        {NAV_ITEMS.map((item, index) => {
+        {visibleItems.map((item, index) => {
           const Icon = item.icon;
           const isActive = activeTab === item.id;
 
