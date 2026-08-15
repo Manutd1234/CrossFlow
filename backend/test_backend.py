@@ -3335,6 +3335,7 @@ def test_cross_border_route_api_uses_shared_latest_ferry_verification():
     env_name = "CROSSFLOW_REQUIRE_DURABLE_FERRY_FRESHNESS"
     original_env = os.environ.get(env_name)
     original_load = ferry_freshness_store.load
+    original_available = ferry_freshness_store.available
     original_osrm = multimodal_router._osrm_route
     latest = "2026-08-14T09:00:08+07:00"
     try:
@@ -3347,6 +3348,11 @@ def test_cross_border_route_api_uses_shared_latest_ferry_verification():
             "latest_checked_at": latest,
             "last_verified_at": latest,
         }
+        # A stored row is only treated as the shared authority when the backend
+        # also reports itself available; without this the route falls back to
+        # the committed snapshot and the test passes only on a machine with a
+        # reachable Supabase.
+        ferry_freshness_store.available = lambda: True
         multimodal_router._osrm_route = lambda *_args: None
         ferry_schedule._reset_runtime_verification_for_tests()
         with clock.frozen(WEEKDAY_1400):
@@ -3372,6 +3378,7 @@ def test_cross_border_route_api_uses_shared_latest_ferry_verification():
         )
     finally:
         ferry_freshness_store.load = original_load
+        ferry_freshness_store.available = original_available
         multimodal_router._osrm_route = original_osrm
         ferry_schedule._reset_runtime_verification_for_tests()
         if original_env is None:
