@@ -133,7 +133,8 @@ describe('application shell DOM', () => {
       container.querySelector('.workspace-subtabs__rail')?.classList ?? [],
     )).toEqual(['workspace-subtabs__rail']);
     expect(planner?.querySelectorAll('form')).toHaveLength(0);
-    expect(planner?.querySelectorAll('fieldset')).toHaveLength(3);
+    // Endpoints, vehicle, route preference, weather & time.
+    expect(planner?.querySelectorAll('fieldset')).toHaveLength(4);
     const submitButton = planner?.querySelector('button[type="submit"]');
     expect(submitButton?.textContent).toContain('Plan Journey');
     expect(submitButton?.classList.contains('ui-button-primary')).toBe(true);

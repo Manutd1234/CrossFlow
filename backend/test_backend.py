@@ -5127,6 +5127,94 @@ def test_multi_stop_route_chains_legs_into_one_schedule():
     assert second_departure - first_arrival == timedelta(minutes=20)
 
 
+def test_multi_stop_offers_whole_journey_alternatives():
+    """A multi-stop journey must offer real alternatives, not just one chain."""
+    result = _multi_stop_result()
+    alternatives = result["alternative_routes"]
+
+    assert alternatives, result.get("alternatives_note")
+    assert len(alternatives) <= route_solver.MAX_MULTI_STOP_ALTERNATIVES
+    assert result["alternatives_note"] is None
+
+    primary_distance = result["corridor"]["distance_km"]
+    for option in alternatives:
+        # Each option is a complete journey, not a fragment: it covers every
+        # leg and carries drawable geometry for the whole chain.
+        assert len(option["legs"]) == result["corridor"]["leg_count"]
+        assert len(option["route_geometry"]) >= 2
+        assert option["distance_km"] > 0
+        assert option["total_eta_mins"] > 0
+        # An "alternative" identical to the primary would be noise.
+        assert option["distance_km"] != primary_distance
+        assert option["varied_leg_index"] < result["corridor"]["leg_count"]
+        # The re-solve boundary has to be stated, because the option shifts
+        # later legs in time without re-modelling their congestion.
+        assert "Only the varied leg was re-solved" in option["limitations"]
+
+
+def test_multi_stop_alternatives_vary_the_longest_leg():
+    """Varying the longest leg is what actually moves the journey total."""
+    result = _multi_stop_result()
+    alternatives = result["alternative_routes"]
+    assert alternatives
+
+    longest = max(
+        range(len(result["legs"])),
+        key=lambda index: result["legs"][index]["distance_km"],
+    )
+    for option in alternatives:
+        assert option["varied_leg_index"] == longest
+        varied = option["legs"][longest]
+        assert varied.get("varied") is True
+        # Legs before the varied one are untouched; the swap cannot
+        # retroactively change a leg that already happened.
+        for index in range(longest):
+            assert option["legs"][index]["route_geometry"] == \
+                result["legs"][index]["route_geometry"]
+
+
+def test_multi_stop_alternative_schedule_shifts_only_downstream_legs():
+    """A slower or faster swapped leg moves everything after it, nothing before."""
+    result = _multi_stop_result()
+    alternatives = result["alternative_routes"]
+    assert alternatives
+
+    for option in alternatives:
+        varied_index = option["varied_leg_index"]
+        delta = option["duration_delta_mins"]
+        for index, leg in enumerate(option["legs"]):
+            if index <= varied_index:
+                assert leg["departure"] == result["legs"][index]["departure"]
+            else:
+                original = datetime.fromisoformat(
+                    result["legs"][index]["departure"],
+                )
+                shifted = datetime.fromisoformat(leg["departure"])
+                moved = (shifted - original).total_seconds() / 60.0
+                assert abs(moved - delta) < 0.2, (index, moved, delta)
+
+
+def test_multi_stop_supports_five_stops_end_to_end():
+    """Five stops is a normal itinerary, not an edge case."""
+    result = _multi_stop_result(stops=[
+        _MULTI_STOP_AMPAR,
+        {**_MULTI_STOP_NAGOYA, "dwell_mins": 15},
+        {"lat": 1.1180, "lng": 104.0480, "name": "Simpang Kabil", "dwell_mins": 10},
+        {"lat": 1.0730, "lng": 103.9560, "name": "Mukakuning", "dwell_mins": 20},
+        _MULTI_STOP_CENTRE,
+    ])
+
+    assert result["corridor"]["stop_count"] == 5
+    assert result["corridor"]["leg_count"] == 4
+    assert len(result["legs"]) == 4
+    assert [stop["role"] for stop in result["stops"]] == [
+        "ORIGIN", "WAYPOINT", "WAYPOINT", "WAYPOINT", "DESTINATION",
+    ]
+    # Dwell is counted for the three intermediate stops only.
+    assert result["dwell_time_mins"] == 45
+    assert result["alternative_routes"]
+
+
 def test_multi_stop_totals_are_the_sum_of_their_legs():
     result = _multi_stop_result()
     legs = result["legs"]
