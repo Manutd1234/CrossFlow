@@ -56,5 +56,7 @@ jobs:
         run: python backend/test_backend.py
       - name: Run modular backend unit tests
         run: python -m unittest discover -s backend/tests -p 'test_*.py'
+      - name: Run authentication boundary tests
+        run: python -m unittest discover -s backend/auth/tests -t . -p 'test_*.py'
       - name: Validate launcher syntax
         run: bash -n scripts/dev.sh

@@ -20,6 +20,7 @@ from fastapi import FastAPI, Header, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from auth.routes import router as auth_router
 from models.congestion_model import forecaster
 from services import clock, ferry_freshness_store, ferry_refresh, ferry_schedule, router
 from services import geocoder, google_routes_benchmark, live_traffic, historical_store
@@ -82,6 +83,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Human sign-in for admins and drivers. Every corridor, ferry, model and
+# routing endpoint below stays public and unauthenticated: auth is a per-route
+# dependency, never middleware, so an unreachable Supabase cannot blank the app.
+app.include_router(auth_router)
 
 
 VehicleType = Literal[
