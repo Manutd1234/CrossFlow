@@ -462,6 +462,18 @@ export interface RouteSchedulingMetadata {
   deadline_slack_mins?: number | null;
 }
 
+export interface RouteScheduleProvenance {
+  source: 'published_schedule' | 'committed_timetable_simulation';
+  snapshot_id?: string;
+  snapshot_verified_at?: string;
+  last_verified_at?: string;
+  latest_checked_at?: string | null;
+  freshness_durability?: string;
+  shared_freshness: boolean;
+  live: false;
+  limitations?: string;
+}
+
 export interface RouteOptimizationResult {
   schedule_feasibility?: ScheduleFeasibility | null;
   /** Content-addressed identifier returned by the authoritative route API. */
@@ -494,6 +506,8 @@ export interface RouteOptimizationResult {
   planned_departure?: string;
   /** Scheduling constraint echoed by newer route APIs. */
   scheduling?: RouteSchedulingMetadata;
+  /** Authority used for exact-time and ferry-slot calculations. */
+  schedule_provenance?: RouteScheduleProvenance;
   schedule_mode?: 'departure' | 'arrive_by';
   requested_departure_at?: string;
   requested_arrive_by?: string;

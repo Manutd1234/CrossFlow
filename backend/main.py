@@ -4,7 +4,7 @@ import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 
 # Vercel loads this entry point as ``backend.main`` from the repository root,
@@ -932,6 +932,7 @@ def _persist_route_response(
         "approved_graph_overrides_used": result.get(
             "approved_graph_overrides_used", [],
         ),
+        "schedule_provenance": result.get("schedule_provenance"),
     }
     identity = make_route_id(identity_payload, route_kind=route_kind)
     # The route calculation is complete before this helper runs. Persistence is
@@ -943,7 +944,28 @@ def _persist_route_response(
         route_code = short_route_code(identity)
     result["route_id"] = identity
     result["route_code"] = route_code
-    payload = envelope(result, now)
+    schedule_provenance = result.get("schedule_provenance")
+    provenance_overrides = None
+    if isinstance(schedule_provenance, dict):
+        if schedule_provenance.get("source") == "committed_timetable_simulation":
+            provenance_overrides = {
+                "ferry_schedule": (
+                    "Committed published timetable used for simulated exact-time "
+                    "planning; no shared freshness or live ferry operations."
+                ),
+            }
+        elif schedule_provenance.get("source") == "published_schedule":
+            provenance_overrides = {
+                "ferry_schedule": (
+                    "Published operator timetable with shared Supabase freshness; "
+                    "not live ferry operations."
+                ),
+            }
+    payload = envelope(
+        result,
+        now,
+        provenance_overrides=provenance_overrides,
+    )
     try:
         _ROUTE_STORE.save(
             identity,
@@ -1126,7 +1148,7 @@ def api_optimize_route(req: RouteRequest):
     identifiers for later driver retrieval.
     """
     now = clock.now()
-    schedule_verified_at = _require_current_ferry_freshness_for_route()
+    schedule_verified_at, schedule_provenance = _route_schedule_authority()
     approved_snapshot, snapshot_source = _approved_override_snapshot_for_route()
     try:
         result = optimize_route(
@@ -1145,6 +1167,7 @@ def api_optimize_route(req: RouteRequest):
         )
     except ValueError as err:
         raise HTTPException(status_code=400, detail=str(err)) from err
+    result["schedule_provenance"] = schedule_provenance
     _routing_intelligence_audit(result, approved_snapshot, snapshot_source)
     return _persist_route_response(req, "optimize-route", result, now)
 
@@ -1170,7 +1193,7 @@ def api_optimize_free_route(req: FreeRouteRequest):
     ``route_code``.
     """
     now = clock.now()
-    schedule_verified_at = _require_current_ferry_freshness_for_route()
+    schedule_verified_at, schedule_provenance = _route_schedule_authority()
     approved_snapshot, snapshot_source = _approved_override_snapshot_for_route()
     try:
         result = optimize_free_route(
@@ -1192,6 +1215,7 @@ def api_optimize_free_route(req: FreeRouteRequest):
         )
     except ValueError as err:
         raise HTTPException(status_code=400, detail=str(err)) from err
+    result["schedule_provenance"] = schedule_provenance
     _routing_intelligence_audit(result, approved_snapshot, snapshot_source)
     return _persist_route_response(req, "optimize-free-route", result, now)
 
@@ -1222,7 +1246,7 @@ def api_optimize_multi_stop_route(req: MultiStopRouteRequest):
     ``scheduling``, ``route_id``, and ``route_code``.
     """
     now = clock.now()
-    schedule_verified_at = _require_current_ferry_freshness_for_route()
+    schedule_verified_at, schedule_provenance = _route_schedule_authority()
     approved_snapshot, snapshot_source = _approved_override_snapshot_for_route()
     try:
         result = optimize_multi_stop_route(
@@ -1240,6 +1264,7 @@ def api_optimize_multi_stop_route(req: MultiStopRouteRequest):
         )
     except ValueError as err:
         raise HTTPException(status_code=400, detail=str(err)) from err
+    result["schedule_provenance"] = schedule_provenance
     _routing_intelligence_audit(result, approved_snapshot, snapshot_source)
     return _persist_route_response(req, "optimize-multi-stop-route", result, now)
 
@@ -1297,14 +1322,24 @@ def api_get_route(
     return stored
 
 
-def _require_current_ferry_freshness_for_route() -> str:
-    """Load the authority used by every route's ferry reference cards."""
+def _route_schedule_authority() -> Tuple[str, Dict[str, Any]]:
+    """Load a route's timetable authority without ever implying live status.
+
+    Exact departure and arrive-by calculations can be reproducible from the
+    committed departure-slot snapshot.  In Vercel, that fallback is allowed
+    only when explicitly enabled, because it does not provide shared freshness
+    across function instances.  The response always carries the authority
+    that selected its ferry cards so callers can distinguish the two cases.
+    """
     try:
         # Both route solvers attach `next_matching_ferries`, including local
         # plans. The UI labels their timestamp "Last verified", so it must come
         # from the same durable row as the Ferry tab on every serverless worker.
-        return ferry_schedule.timetable_metadata()["last_verified_at"]
+        timetable = ferry_schedule.timetable_metadata()
     except ferry_freshness_store.FreshnessStoreUnavailable as error:
+        if ferry_schedule.committed_snapshot_fallback_enabled():
+            timetable = ferry_schedule.committed_timetable_metadata()
+            return _committed_route_schedule_authority(timetable)
         raise HTTPException(
             status_code=503,
             detail=(
@@ -1317,6 +1352,44 @@ def _require_current_ferry_freshness_for_route() -> str:
                 "Retry-After": "5",
             },
         ) from error
+
+    # Local single-instance development has always used the committed snapshot
+    # when no shared store is configured. Preserve that mode, but make it
+    # explicit on every route response instead of calling its timestamp live.
+    if timetable.get("freshness_durability") != "shared_supabase":
+        return _committed_route_schedule_authority(
+            ferry_schedule.committed_timetable_metadata(),
+        )
+
+    return timetable["last_verified_at"], {
+        "source": "published_schedule",
+        "snapshot_id": timetable["snapshot_id"],
+        "snapshot_verified_at": timetable["snapshot_verified_at"],
+        "last_verified_at": timetable["last_verified_at"],
+        "latest_checked_at": timetable["latest_checked_at"],
+        "freshness_durability": timetable["freshness_durability"],
+        "shared_freshness": True,
+        "live": False,
+        "limitations": timetable["limitations"],
+    }
+
+
+def _committed_route_schedule_authority(
+    timetable: Dict[str, Any],
+) -> Tuple[str, Dict[str, Any]]:
+    """Describe deterministic planning against the bundled timetable only."""
+    provenance: Dict[str, Any] = {
+        "source": "committed_timetable_simulation",
+        "snapshot_id": timetable["snapshot_id"],
+        "snapshot_verified_at": timetable["snapshot_verified_at"],
+        "last_verified_at": timetable["last_verified_at"],
+        "latest_checked_at": None,
+        "freshness_durability": timetable["freshness_durability"],
+        "shared_freshness": False,
+        "live": False,
+        "limitations": timetable["limitations"],
+    }
+    return timetable["last_verified_at"], provenance
 
 
 @app.get("/api/geocode")

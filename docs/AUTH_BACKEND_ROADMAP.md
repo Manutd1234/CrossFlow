@@ -274,8 +274,8 @@ The React service signs in directly with Supabase, then calls
 
 Its real job is to be **the executable form of the D2 contract** — it shows the
 user exactly where the password goes (Supabase, not us) and exactly what the
-backend expects (a Bearer token). It also handles refresh, GitHub OAuth, guest
-continuation, project mismatch, and graceful auth outages.
+backend expects (a Bearer token). It also handles refresh, guest continuation,
+project mismatch, and graceful auth outages.
 
 The publishable key is embedded in the page, which is correct and intended —
 that key is designed to be public and is useless without a user session and the

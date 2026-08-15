@@ -11,6 +11,7 @@ and modelled estimates; it does not present a timetable, queue estimate or
 forecast as live unless a connected source actually supplies a fresh
 observation.
 
+
 ---
 
 ## 🌟 Key Features
@@ -427,11 +428,13 @@ secrets are configured. Set only the integrations you use:
 | `VITE_API_BASE_URL` | API origin for a split frontend/backend deployment; local Vite and the bundled Vercel config use same-origin `/api` by default. |
 | `VITE_SUPABASE_URL` | Supabase project URL used by the React sign-in flow. It must identify the same project as the server-side `SUPABASE_URL`. |
 | `VITE_SUPABASE_PUBLISHABLE_KEY` (or legacy `VITE_SUPABASE_ANON_KEY`) | Browser-safe Supabase key for direct sign-in and token refresh. Never put `SUPABASE_SECRET_KEY` or `SUPABASE_SERVICE_ROLE_KEY` in a `VITE_` variable. |
+| `VITE_TEST_ADMIN_EMAIL` + `VITE_TEST_ADMIN_PASSWORD` | Optional shared test administrator shown as a one-click sign-in. These values are embedded in the public browser bundle by design. Use them only with a disposable demo Supabase project containing no production data; leave either blank to hide the button. The account must already exist and have `role = 'admin'` in `crossflow_profiles`. |
 | `VITE_ENABLE_GOOGLE_BENCHMARK` | Must equal `true` to show the optional text-only “Compare online” action. This is a UI gate, never an API key; the server gate and dedicated server key below are also required. |
 | `CROSSFLOW_AUTH_MODE` | `disabled` by default locally; set to `supabase` after applying `backend/auth/schema.sql` to enable the per-route auth checks. Vercel pins this to `supabase`. |
 | `TOMTOM_API_KEY` | Optional TomTom flow-segment layer used by `/api/live-traffic`. |
 | `SUPABASE_URL` + `SUPABASE_SECRET_KEY` (or legacy `SUPABASE_SERVICE_ROLE_KEY`) | Server-only Supabase credentials. Apply `backend/data/ferry_freshness.sql` for shared ferry verification, and optionally `backend/data/routing_intelligence.sql` for durable typed traffic observations and shortcut review/approval records. Ferry freshness fails closed in production when required durability is unavailable; routing intelligence remains optional and must report its actual storage boundary. Never expose the secret/service-role key. Official `*.supabase.co` hosts are accepted; set `CROSSFLOW_SUPABASE_ALLOWED_HOST` only for an audited self-hosted HTTPS origin. |
 | `CROSSFLOW_REQUIRE_DURABLE_FERRY_FRESHNESS` | Durability gate. `vercel.json` pins it to `1` for Preview and Production so shared freshness cannot silently degrade to process memory. Use `0` only for local committed-snapshot fallback. |
+| `CROSSFLOW_FERRY_FRESHNESS_FALLBACK` | Set to `committed_snapshot` to keep exact departure/arrive-by route planning available when the shared freshness store is down. The backend uses only the immutable bundled timetable, labels the route schedule as simulated, and still requires operator verification; ferry refresh remains fail-closed. Vercel enables this route-only fallback. |
 | `CROSSFLOW_HISTORY_DB` | Writable SQLite path for legacy congestion history and typed spatial speed observations. API metadata distinguishes a persistent file from serverless `/tmp` or memory fallback. |
 | `CROSSFLOW_SPATIAL_HISTORY_RETENTION_DAYS` | Typed spatial-observation retention. Defaults to `1825` (five years); accepted values are `365` through `7300`. |
 | `CROSSFLOW_ROUTING_INTELLIGENCE_STORE` | `local` by default. Set to `supabase` only after applying `backend/data/routing_intelligence.sql`; ordinary ferry Supabase credentials never implicitly probe this optional schema. |

@@ -8,8 +8,7 @@ import {
   RouteLocation, RouteOptimizationResult, RoutePreference, StoredSession, VehicleType,
 } from './types';
 import {
-  completeOAuthRedirect, fetchAuthStatus, fetchSession, readStoredSession,
-  supabaseConfigured, validSession,
+  fetchAuthStatus, fetchSession, readStoredSession, supabaseConfigured, validSession,
 } from './services/auth';
 import {
   fetchCorridorRoutes, fetchCorridors, fetchFerries, fetchOperationsSummary,
@@ -220,16 +219,7 @@ export function App() {
       if (!cancelled) setAuthStatus(status);
     });
 
-    const resumeSession = (): StoredSession | null => {
-      try {
-        // An OAuth return carries its tokens in the URL fragment and must be
-        // consumed before the stored session is read.
-        return completeOAuthRedirect() ?? readStoredSession();
-      } catch {
-        return readStoredSession();
-      }
-    };
-    const stored = resumeSession();
+    const stored = readStoredSession();
     // Always resolve through a promise so the gate's readiness flag is never
     // set synchronously inside the effect, which would cascade renders.
     Promise.resolve()
@@ -257,9 +247,7 @@ export function App() {
   // resolve a role from it.
   const signInAvailable = supabaseConfigured()
     && (authStatus === null || authStatus.enabled);
-  // Guest mode is the only restricted experience. Every authenticated account
-  // is an administrator and receives the complete workspace navigation.
-  const driverAccess = isGuest;
+  const driverAccess = isGuest || identity?.role.toLowerCase() === 'driver';
 
   const visibleActiveTab: AppTab = driverAccess && activeTab === 'analytics'
     ? 'map'

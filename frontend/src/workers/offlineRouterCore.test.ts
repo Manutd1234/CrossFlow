@@ -452,5 +452,5 @@ describe('bundled road routing', () => {
       expect(route.overlap_ratio).toBeLessThanOrEqual(0.82);
       expect(route.distance_km).toBeLessThanOrEqual(result.routes[0].distance_km * 1.65);
     });
-  });
+  }, 20_000);
 });

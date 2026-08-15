@@ -23,6 +23,12 @@ const SUPABASE_KEY = (
 const configuredApiBase = import.meta.env.VITE_API_BASE_URL?.trim().replace(/\/$/, '');
 const API_BASE = configuredApiBase ?? '';
 
+// These are intentionally browser-visible demo credentials. They must point
+// only at a disposable test project/account; Vite embeds every VITE_ value in
+// the public bundle, so this can never be a production administrator secret.
+const TEST_ADMIN_EMAIL = import.meta.env.VITE_TEST_ADMIN_EMAIL?.trim() ?? '';
+const TEST_ADMIN_PASSWORD = import.meta.env.VITE_TEST_ADMIN_PASSWORD ?? '';
+
 const STORAGE_KEY = 'crossflow.session';
 const AUTH_TIMEOUT_MS = 15_000;
 /** Refresh this long before expiry so an in-flight request cannot age out. */
@@ -37,6 +43,11 @@ export class AuthError extends Error {
 
 export function supabaseConfigured(): boolean {
   return SUPABASE_URL.length > 0 && SUPABASE_KEY.length > 0;
+}
+
+/** Whether this build offers one-click access to its shared test admin. */
+export function testAdminConfigured(): boolean {
+  return TEST_ADMIN_EMAIL.length > 0 && TEST_ADMIN_PASSWORD.length > 0;
 }
 
 /** The Supabase project this build authenticates against. */
@@ -152,59 +163,6 @@ function writeStoredSession(session: StoredSession | null): void {
   }
 }
 
-/**
- * Hand the browser to GitHub via Supabase.
- *
- * This never returns: the page navigates away and comes back to `redirect_to`
- * with the tokens in the URL fragment, which `completeOAuthRedirect` picks up.
- * The GitHub client secret lives only in Supabase, so nothing secret is needed
- * here or in the bundle.
- */
-export function signInWithGitHub(redirectTo: string = window.location.origin): void {
-  if (!supabaseConfigured()) {
-    throw new AuthError(
-      'Sign-in is not configured: VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY are unset.',
-    );
-  }
-  const url = new URL(`${SUPABASE_URL}/auth/v1/authorize`);
-  url.searchParams.set('provider', 'github');
-  url.searchParams.set('redirect_to', redirectTo);
-  window.location.assign(url.toString());
-}
-
-/**
- * Consume the tokens Supabase leaves in the URL fragment after an OAuth return.
- *
- * The fragment is always cleared, success or failure. Leaving it in place would
- * put a live access token in the address bar, in browser history, and in
- * anything the user copies or shares from there.
- */
-export function completeOAuthRedirect(): StoredSession | null {
-  const raw = window.location.hash.startsWith('#')
-    ? window.location.hash.slice(1)
-    : '';
-  if (!raw) return null;
-  const params = new URLSearchParams(raw);
-  const error = params.get('error_description') ?? params.get('error');
-  const accessToken = params.get('access_token');
-  if (!error && !accessToken) return null;
-
-  const cleanUrl = `${window.location.pathname}${window.location.search}`;
-  window.history.replaceState(null, '', cleanUrl);
-
-  if (error) throw new AuthError(error.replace(/\+/g, ' '));
-
-  const expiresIn = Number(params.get('expires_in'));
-  const session: StoredSession = {
-    accessToken: accessToken as string,
-    refreshToken: params.get('refresh_token') ?? '',
-    expiresAtMs: Date.now()
-      + (Number.isFinite(expiresIn) && expiresIn > 0 ? expiresIn : 3600) * 1000,
-  };
-  writeStoredSession(session);
-  return session;
-}
-
 export async function signIn(email: string, password: string): Promise<StoredSession> {
   const payload = await supabaseFetch('/auth/v1/token?grant_type=password', {
     email: email.trim(),
@@ -213,6 +171,20 @@ export async function signIn(email: string, password: string): Promise<StoredSes
   const session = toStoredSession(payload);
   writeStoredSession(session);
   return session;
+}
+
+/**
+ * Sign in with the explicitly configured shared test administrator.
+ *
+ * The credentials still go directly to Supabase through `signIn`; they never
+ * reach the CrossFlow API. The UI separately verifies that the server resolves
+ * this account as an admin before it accepts the session.
+ */
+export async function signInAsTestAdmin(): Promise<StoredSession> {
+  if (!testAdminConfigured()) {
+    throw new AuthError('Test admin access is not configured for this build.');
+  }
+  return signIn(TEST_ADMIN_EMAIL, TEST_ADMIN_PASSWORD);
 }
 
 export async function refreshSession(session: StoredSession): Promise<StoredSession> {

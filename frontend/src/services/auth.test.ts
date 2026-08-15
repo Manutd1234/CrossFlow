@@ -8,14 +8,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const SUPABASE_URL = 'https://wtednggryrikyvkuhqjo.supabase.co';
 const PUBLISHABLE_KEY = 'sb_publishable_test';
+const TEST_ADMIN_EMAIL = 'admin@test.local';
+const TEST_ADMIN_PASSWORD = 'test-admin-password';
 
 vi.stubEnv('VITE_SUPABASE_URL', SUPABASE_URL);
 vi.stubEnv('VITE_SUPABASE_PUBLISHABLE_KEY', PUBLISHABLE_KEY);
+vi.stubEnv('VITE_TEST_ADMIN_EMAIL', TEST_ADMIN_EMAIL);
+vi.stubEnv('VITE_TEST_ADMIN_PASSWORD', TEST_ADMIN_PASSWORD);
 
 const {
-  AuthError, completeOAuthRedirect, fetchSession, projectMismatch,
-  readStoredSession, refreshSession, signIn, signInWithGitHub, signOut,
-  supabaseConfigured, validSession,
+  AuthError, fetchSession, projectMismatch, readStoredSession, refreshSession,
+  signIn, signInAsTestAdmin, signOut, supabaseConfigured, testAdminConfigured,
+  validSession,
 } = await import('./auth');
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
@@ -96,6 +100,22 @@ describe('supabase sign-in', () => {
     expect(stored?.accessToken).toBe('access-token-abc');
     expect(stored?.refreshToken).toBe('refresh-token-xyz');
     expect(stored?.expiresAtMs).toBeGreaterThan(Date.now());
+  });
+
+  it('offers the configured test admin without sending its password to CrossFlow', async () => {
+    const fetchMock = vi.fn<FetchLike>(async () => jsonResponse(TOKEN_PAYLOAD));
+    vi.stubGlobal('fetch', fetchMock);
+
+    expect(testAdminConfigured()).toBe(true);
+    await signInAsTestAdmin();
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`${SUPABASE_URL}/auth/v1/token?grant_type=password`);
+    expect(JSON.parse(String(init.body))).toEqual({
+      email: TEST_ADMIN_EMAIL,
+      password: TEST_ADMIN_PASSWORD,
+    });
+    expect(String(url)).not.toContain('/api/');
   });
 
   it('surfaces Supabase\'s own message instead of a generic failure', async () => {
@@ -197,69 +217,6 @@ describe('role resolution', () => {
     await expect(fetchSession({
       accessToken: 'stale', refreshToken: 'r', expiresAtMs: Date.now() + 1000,
     })).rejects.toThrow('session has expired');
-  });
-});
-
-describe('github oauth', () => {
-  function stubLocation(hash: string) {
-    const replaceState = vi.fn();
-    const assign = vi.fn();
-    Object.defineProperty(window, 'location', {
-      configurable: true,
-      value: {
-        hash,
-        pathname: '/',
-        search: '',
-        origin: 'http://localhost:3000',
-        assign,
-      },
-    });
-    Object.defineProperty(window, 'history', {
-      configurable: true,
-      value: { replaceState },
-    });
-    return { assign, replaceState };
-  }
-
-  it('sends the browser to Supabase with the provider and return URL', () => {
-    const { assign } = stubLocation('');
-    signInWithGitHub('http://localhost:3000');
-
-    const target = new URL(assign.mock.calls[0][0] as string);
-    expect(target.origin).toBe(SUPABASE_URL);
-    expect(target.pathname).toBe('/auth/v1/authorize');
-    expect(target.searchParams.get('provider')).toBe('github');
-    expect(target.searchParams.get('redirect_to')).toBe('http://localhost:3000');
-  });
-
-  it('consumes tokens from the return fragment and stores the session', () => {
-    stubLocation('#access_token=gh-token&refresh_token=gh-refresh&expires_in=3600&token_type=bearer');
-
-    const session = completeOAuthRedirect();
-
-    expect(session?.accessToken).toBe('gh-token');
-    expect(session?.refreshToken).toBe('gh-refresh');
-    expect(readStoredSession()?.accessToken).toBe('gh-token');
-  });
-
-  it('always strips the fragment so a live token cannot sit in the address bar', () => {
-    const { replaceState } = stubLocation('#access_token=gh-token&expires_in=3600');
-    completeOAuthRedirect();
-    expect(replaceState).toHaveBeenCalledWith(null, '', '/');
-  });
-
-  it('reports a denied authorization and still clears the fragment', () => {
-    const { replaceState } = stubLocation('#error=access_denied&error_description=The+user+denied+access');
-
-    expect(() => completeOAuthRedirect()).toThrow('The user denied access');
-    expect(replaceState).toHaveBeenCalled();
-    expect(readStoredSession()).toBeNull();
-  });
-
-  it('ignores an ordinary page load with no fragment', () => {
-    const { replaceState } = stubLocation('');
-    expect(completeOAuthRedirect()).toBeNull();
-    expect(replaceState).not.toHaveBeenCalled();
   });
 });
 
