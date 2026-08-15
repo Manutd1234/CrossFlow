@@ -546,7 +546,7 @@ export const LocationSearch: React.FC<LocationSearchProps> = ({
               ? <span aria-hidden="true" style={{ alignItems: 'center', display: 'flex', height: '34px', justifyContent: 'center', width: '34px' }}><ChevronDown size={ICON_SIZE.medium} /></span>
               : inputValue
               ? <button type="button" onClick={handleClear} aria-label="Clear selected location" style={{ alignItems: 'center', background: 'none', border: 'none', borderRadius: '8px', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', height: '34px', justifyContent: 'center', padding: 0, width: '34px' }}><X size={ICON_SIZE.medium} aria-hidden="true" /></button>
-              : <span aria-hidden="true" style={{ alignItems: 'center', display: 'flex', height: '34px', justifyContent: 'center', width: '34px' }}><Search size={ICON_SIZE.big} /></span>
+              : <span aria-hidden="true" style={{ alignItems: 'center', display: 'flex', height: '34px', justifyContent: 'center', width: '34px' }}><Search size={ICON_SIZE.large} /></span>
             }
           </span>
         </div>
@@ -565,7 +565,7 @@ export const LocationSearch: React.FC<LocationSearchProps> = ({
               display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px',
             }}
           >
-          {isLoading ? <Loader size={ICON_SIZE.big} aria-hidden="true" style={{ animation: 'spin 1s linear infinite' }} /> : <Search size={ICON_SIZE.big} aria-hidden="true" />}
+          {isLoading ? <Loader size={ICON_SIZE.large} aria-hidden="true" style={{ animation: 'spin 1s linear infinite' }} /> : <Search size={ICON_SIZE.large} aria-hidden="true" />}
           {isLoading ? 'Finding…' : 'Search'}
         </button>
       )}

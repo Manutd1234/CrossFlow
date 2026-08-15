@@ -4001,12 +4001,31 @@ a:focus-visible {
 
 .route-endpoint-rail {
   position: relative;
-  display: grid;
-  grid-template-rows: repeat(2, minmax(0, 1fr));
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
   align-self: stretch;
-  align-items: center;
-  justify-items: center;
   gap: 8px;
+}
+
+.route-endpoint-marker-row {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 46px;
+  flex: 0 0 46px;
+  display: grid;
+  place-items: center;
+}
+
+.route-endpoint-marker-row:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  top: calc(50% + 12px);
+  left: 50%;
+  height: 30px;
+  border-left: 2px dotted var(--text-muted);
+  transform: translateX(-50%);
 }
 
 .route-endpoint-icon {
@@ -4023,13 +4042,9 @@ a:focus-visible {
   color: var(--accent-rose);
 }
 
-.route-endpoint-connector {
-  position: absolute;
-  top: 36%;
-  bottom: 36%;
-  left: 50%;
-  border-left: 2px dotted var(--text-muted);
-  transform: translateX(-50%);
+.route-endpoint-icon-waypoint {
+  color: var(--accent-rose);
+  fill: var(--bg-secondary);
 }
 
 .route-endpoint-fields {
@@ -4151,68 +4166,66 @@ a:focus-visible {
   transform: translateY(-1px);
 }
 
-.route-swap-button {
+.route-swap-button,
+.route-add-stop-button {
   position: relative;
-  align-self: center;
-  margin: -6px 0;
   z-index: 1;
-  width: 44px;
-  height: 44px;
+  width: 46px;
+  height: 46px;
   display: grid;
   place-items: center;
-  border: 1px solid var(--border-strong);
-  border-radius: 50%;
-  background: var(--bg-secondary);
+  border: 1px solid rgba(45, 152, 153, 0.45);
+  border-radius: var(--radius-sm);
+  background: rgba(45, 152, 153, 0.1);
   color: var(--accent-cyan);
   box-shadow: var(--shadow-card);
   cursor: pointer;
   transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
-.route-swap-button:hover {
+.route-swap-button svg {
+  transition: transform 0.2s ease;
+}
+
+.route-swap-button:hover svg {
   transform: rotate(180deg);
+}
+
+.route-swap-button:hover {
+  background: rgba(45, 152, 153, 0.2);
   box-shadow: var(--shadow-card-hover);
 }
 
-.route-add-stop-button {
-  width: 30px;
-  height: 30px;
-  display: grid;
-  place-items: center;
-  border: 1px solid var(--border-strong);
-  border-radius: 50%;
-  background: var(--bg-secondary);
-  color: var(--accent-cyan);
-  cursor: pointer;
-}
-
 .route-add-stop-button:hover {
-  box-shadow: var(--shadow-card);
-  transform: translateY(-1px);
+  background: rgba(45, 152, 153, 0.2);
+  box-shadow: var(--shadow-card-hover);
 }
 
 .route-waypoint-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 30px;
-  align-items: center;
-  gap: 8px;
+  min-width: 0;
 }
 
 .route-waypoint-remove {
-  width: 30px;
-  height: 30px;
+  width: 46px;
+  height: 46px;
   display: grid;
   place-items: center;
-  border: 0;
+  border: 1px solid rgba(217, 111, 100, 0.45);
   border-radius: 50%;
-  background: transparent;
-  color: var(--text-muted);
+  background: rgba(217, 111, 100, 0.1);
+  color: var(--accent-rose);
   cursor: pointer;
 }
 
 .route-waypoint-remove:hover {
-  background: rgba(217, 111, 100, 0.12);
-  color: var(--accent-rose);
+  background: rgba(217, 111, 100, 0.2);
+}
+
+.route-endpoint-actions {
+  display: flex;
+  min-width: 46px;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .route-validation {
@@ -4792,7 +4805,7 @@ a:focus-visible {
 
 .route-planner-layout .route-location-picker {
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) 44px;
+  grid-template-columns: 18px minmax(0, 1fr) 46px;
   align-items: center;
   column-gap: 10px;
   row-gap: 8px;
@@ -4813,27 +4826,15 @@ a:focus-visible {
   grid-row: 1;
 }
 
-.route-planner-layout .route-location-picker .route-swap-button {
+.route-planner-layout .route-location-picker .route-endpoint-actions {
   grid-column: 3;
   grid-row: 1;
-}
-
-.route-planner-layout .route-location-picker .route-add-stop-button {
-  grid-column: 3;
-  grid-row: 1;
-  align-self: center;
-  justify-self: center;
-  margin-top: 82px;
-  z-index: 1;
+  align-self: stretch;
 }
 
 .route-planner-layout .route-location-picker .route-validation {
   grid-column: 2 / -1;
   grid-row: 2;
-}
-
-.route-planner-layout .route-swap-button {
-  align-self: center;
 }
 
 .route-planner-layout .route-validation,

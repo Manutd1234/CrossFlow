@@ -501,9 +501,17 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
           <legend className="route-planner-fieldset-legend">Route</legend>
           <div className="route-location-picker">
             <div className="route-endpoint-rail" aria-hidden="true">
-              <CircleSmall className="route-endpoint-icon route-endpoint-icon-origin" size={ICON_SIZE.medium} />
-              <span className="route-endpoint-connector" />
-              <MapPin className="route-endpoint-icon route-endpoint-icon-destination" size={ICON_SIZE.medium} />
+              <span className="route-endpoint-marker-row">
+                <CircleSmall className="route-endpoint-icon route-endpoint-icon-origin" size={ICON_SIZE.medium} />
+              </span>
+              {waypoints.map((_, index) => (
+                <span className="route-endpoint-marker-row" key={`waypoint-marker-${index}`}>
+                  <CircleSmall className="route-endpoint-icon route-endpoint-icon-waypoint" size={ICON_SIZE.medium} />
+                </span>
+              ))}
+              <span className="route-endpoint-marker-row">
+                <MapPin className="route-endpoint-icon route-endpoint-icon-destination" size={ICON_SIZE.medium} />
+              </span>
             </div>
 
             <div className="route-endpoint-fields">
@@ -574,17 +582,6 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
                     placeholder="Add an intermediate stop"
                     onOpenMapPicker={() => setPickerTarget(index)}
                   />
-                  <button
-                    type="button"
-                    className="route-waypoint-remove"
-                    aria-label={`Remove stop ${index + 1}`}
-                    onClick={() => {
-                      setWaypoints((current) => current.filter((_, itemIndex) => itemIndex !== index));
-                      invalidateResult();
-                    }}
-                  >
-                    <X size={ICON_SIZE.medium} aria-hidden="true" />
-                  </button>
                 </div>
               ))}
 
@@ -626,25 +623,40 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
               )}
             </div>
 
-            <button
-              type="button"
-              className="route-swap-button"
-              onClick={swapLocations}
-              aria-label="Swap origin and destination"
-              title="Swap origin and destination"
-            >
-              <ArrowDownUp size={ICON_SIZE.large} aria-hidden="true" />
-            </button>
-
-            <button
-              type="button"
-              className="route-add-stop-button"
-              onClick={addWaypoint}
-              aria-label="Add an intermediate stop"
-              title="Add an intermediate stop"
-            >
-              <Plus size={ICON_SIZE.medium} aria-hidden="true" />
-            </button>
+            <div className="route-endpoint-actions">
+              <button
+                type="button"
+                className="route-swap-button"
+                onClick={swapLocations}
+                aria-label="Swap origin and destination"
+                title="Swap origin and destination"
+              >
+                <ArrowDownUp size={ICON_SIZE.large} aria-hidden="true" />
+              </button>
+              {waypoints.map((_, index) => (
+                <button
+                  type="button"
+                  className="route-waypoint-remove"
+                  key={`remove-waypoint-${index}`}
+                  aria-label={`Remove stop ${index + 1}`}
+                  onClick={() => {
+                    setWaypoints((current) => current.filter((__, itemIndex) => itemIndex !== index));
+                    invalidateResult();
+                  }}
+                >
+                  <X size={ICON_SIZE.large} aria-hidden="true" />
+                </button>
+              ))}
+              <button
+                type="button"
+                className="route-add-stop-button"
+                onClick={addWaypoint}
+                aria-label="Add an intermediate stop"
+                title="Add an intermediate stop"
+              >
+                <Plus size={ICON_SIZE.large} aria-hidden="true" />
+              </button>
+            </div>
 
             {(isNamedMode ? sameLocationNamed : sameLocationFree) && (
               <p id="route-endpoint-validation" className="route-validation" role="alert" >
