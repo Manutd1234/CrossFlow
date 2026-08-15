@@ -206,6 +206,115 @@ and `--force-restart`.
 
 ---
 
+## FastAPI route-planning contract
+
+The interactive API is available at `http://localhost:8000` (OpenAPI UI at
+`/docs`). Route planning has three POST endpoints:
+
+| Endpoint | Request shape |
+|---|---|
+| `POST /api/optimize-route` | A named `corridor_id`, or both `origin_id` and `destination_id`, plus the required `vehicle_type`. |
+| `POST /api/optimize-free-route` | Required `origin_lat`, `origin_lng`, `destination_lat`, and `destination_lng`; optional display names and route settings. |
+| `POST /api/optimize-multi-stop-route` | An ordered `stops` array with 3–8 stops. Each stop has `lat`, `lng`, optional `name`, and optional `dwell_mins`; `optimize_order` defaults to `false`. |
+
+All three request types also accept `weather` (`0` clear, `1` rain, `2`
+storm), `route_preference` (`BALANCED`, `FASTEST`, `SHORTEST`, `EASY`, or
+`LOCAL`), and the legacy `hour` field (`0`–`23`, default `14`). For a precise
+schedule, send exactly one of `departure_at` or `arrive_by` as a timezone-aware
+ISO-8601 timestamp. They are mutually exclusive, and a timestamp without an
+offset is rejected. `+07:00` (Batam) and `+08:00` (Singapore) are accepted;
+the solver normalizes them for calculation and returns timezone-aware times.
+If neither timestamp is provided, `hour` remains the backwards-compatible
+hour-of-day mode. An `arrive_by` request searches for the latest feasible
+departure in a bounded 48-hour window and returns HTTP 400 when no feasible
+departure is found.
+
+Example departure-time request:
+
+```json
+{
+  "origin_lat": 1.0605,
+  "origin_lng": 104.0303,
+  "destination_lat": 1.1318,
+  "destination_lng": 104.0554,
+  "vehicle_type": "COMMUTER",
+  "departure_at": "2026-08-15T08:30:00+07:00",
+  "route_preference": "BALANCED"
+}
+```
+
+To request an arrival deadline, replace `departure_at` with (not in addition
+to) an `arrive_by` value, for example
+`"arrive_by": "2026-08-15T10:00:00+07:00"`. A multi-stop body uses the same
+scheduling fields:
+
+```json
+{
+  "stops": [
+    {"lat": 1.1630, "lng": 104.0025, "name": "Batu Ampar"},
+    {"lat": 1.1465, "lng": 104.0125, "name": "Nagoya Hill", "dwell_mins": 15},
+    {"lat": 1.1318, "lng": 104.0554, "name": "Batam Centre"}
+  ],
+  "vehicle_type": "LIGHT_TRUCK",
+  "arrive_by": "2026-08-15T13:00:00+07:00"
+}
+```
+
+Successful responses are flat envelopes: `generated_at`, `data_source`, and
+`provenance` are returned alongside the route result. The route identity fields
+are:
+
+- `route_id`: the full 64-character lowercase SHA-256 content hash.
+- `route_code`: a deterministic, driver-friendly 7-character code. It is an
+  identifier only; it is not an access credential.
+
+The route result includes `route_type`, `planned_departure`,
+`estimated_arrival`, `estimated_travel_time_mins`, `total_eta_mins`,
+`route_geometry` (latitude/longitude pairs), `legs` where applicable, and a
+`scheduling` object. The scheduling object reports `mode` (`HOUR`, `DEPART_AT`,
+or `ARRIVE_BY`), the requested timestamp, and `deadline_slack_mins` when an
+arrival deadline was used. Representative response excerpt:
+
+```json
+{
+  "generated_at": "2026-08-15T01:30:04+00:00",
+  "data_source": "simulated",
+  "provenance": {"road_network": "OpenStreetMap Batam Extract", "traffic": "Historical & Telemetry Model"},
+  "route_id": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "route_code": "7KQ4MNP",
+  "route_type": "ROAD_ROUTE",
+  "planned_departure": "2026-08-15T08:30:00+07:00",
+  "estimated_arrival": "2026-08-15T08:56:00+07:00",
+  "estimated_travel_time_mins": 26.0,
+  "total_eta_mins": 26,
+  "route_geometry": [[1.0605, 104.0303], [1.1318, 104.0554]],
+  "scheduling": {
+    "mode": "DEPART_AT",
+    "requested_departure_at": "2026-08-15T08:30:00+07:00",
+    "requested_arrive_by": null,
+    "deadline_slack_mins": null
+  }
+}
+```
+
+The excerpt is shortened; multimodal and multi-stop responses add their
+normal `legs`, ferry, stop, and navigation fields. Use the actual
+`route_id` or `route_code` to retrieve a persisted response:
+
+```http
+GET /api/routes/7KQ4MNP
+X-CrossFlow-Route-Token: <CROSSFLOW_ROUTE_READ_TOKEN>
+```
+
+The equivalent `/routes/{route_id}` path is also available. Retrieval accepts
+either the 64-character hash or 7-character code and authorizes a valid
+configured `X-CrossFlow-Route-Token`; deployments may also use the existing
+`X-CrossFlow-Admin-Token` compatibility path (and the admin path is used when
+no route-read token is configured). Route IDs/codes alone do not authorize
+access. Responses are marked `Cache-Control: private, no-store`.
+
+---
+
 ## 🔧 Manual Setup
 
 ### 1. Frontend Web Application Setup
@@ -281,6 +390,8 @@ secrets are configured. Set only the integrations you use:
 | `CROSSFLOW_ROUTE_PROVIDER` | `local` by default. The legacy `supabase` value fails fast because its RPC cannot prove vehicle constraints. Only `supabase_v2_constrained` may be enabled after a replacement RPC returns the complete constraint, navigation and alternative-route contract; all failures retain the local OSM route. |
 | `CROSSFLOW_ROUTE_LEARNING_DB` | Writable SQLite path for verified traversal observations. A configured persistent volume is durable; serverless `/tmp` is explicitly reported as ephemeral. |
 | `CROSSFLOW_ADMIN_TOKEN` | Server-only token for protected ingestion, review/promotion, persistence status and retraining operations through the `X-CrossFlow-Admin-Token` header. An unset token denies access; do not reuse a Supabase credential. |
+| `CROSSFLOW_ROUTE_DB` | SQLite path for persisted, content-addressed route responses. Configure a durable volume when drivers must retrieve routes across restarts. |
+| `CROSSFLOW_ROUTE_READ_TOKEN` | Optional deployment-scoped token accepted by `X-CrossFlow-Route-Token` for driver route retrieval. Route IDs are identifiers, not credentials. |
 | `CROSSFLOW_ENABLE_GOOGLE_BENCHMARK` | Must equal `true` to expose the optional, text-only `/api/route-benchmark` comparison. Disabled by default. |
 | `CROSSFLOW_GOOGLE_ROUTES_API_KEY` | Dedicated server-only Google Routes v2 key for the opt-in benchmark. Browser-prefixed and legacy Google keys are never read. |
 | `SUPABASE_DB_URL` | Optional PostgreSQL URL used only by ingestion/training scripts. Never expose it to the frontend. |

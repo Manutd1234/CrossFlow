@@ -4964,6 +4964,52 @@ a:focus-visible {
   padding: 11px 12px;
 }
 
+.route-planner-layout .route-schedule-mode-row {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.route-planner-layout .route-schedule-mode-select,
+.route-planner-layout .route-schedule-at-input {
+  background: var(--surface-1);
+  border: 1px solid var(--border-color);
+  border-radius: 7px;
+  color: var(--text-primary);
+  font: inherit;
+  min-height: 32px;
+  padding: 5px 8px;
+}
+
+.route-planner-layout .route-schedule-mode-select {
+  color: var(--accent-cyan);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.route-planner-layout .route-schedule-at-label {
+  color: var(--text-muted);
+  display: block;
+  font-size: 0.66rem;
+  margin-bottom: 4px;
+}
+
+.route-planner-layout .route-schedule-at-input {
+  box-sizing: border-box;
+  color-scheme: light;
+  font-size: 0.76rem;
+  width: 100%;
+}
+
+.route-planner-layout .route-schedule-timezone {
+  color: var(--text-muted);
+  font-size: 0.61rem;
+  line-height: 1.35;
+  margin: 4px 0 10px;
+}
+
 .route-planner-layout .route-departure-time-header {
   display: flex;
   justify-content: space-between;
@@ -5173,6 +5219,19 @@ a:focus-visible {
   line-height: 1.2;
   margin: 5px 0 0;
   overflow-wrap: anywhere;
+}
+
+.route-planner-layout .route-result-route-id {
+  color: var(--text-muted);
+  display: block;
+  font-size: 0.66rem;
+  margin-top: 6px;
+  overflow-wrap: anywhere;
+}
+
+.route-planner-layout .route-result-route-id code {
+  color: var(--accent-cyan);
+  font-family: var(--font-mono, monospace);
 }
 
 .route-planner-layout .route-result-direction-arrow,

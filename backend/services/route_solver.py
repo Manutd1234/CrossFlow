@@ -789,6 +789,82 @@ def corridor_for_locations(
     }
 
 
+def _normalise_schedule_datetime(value: Optional[datetime], field_name: str) -> Optional[datetime]:
+    if value is None:
+        return None
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError(f"{field_name} must include a timezone offset.")
+    return value.astimezone(clock.BATAM_TZ)
+
+
+def _validate_schedule_request(
+    departure_at: Optional[datetime],
+    arrive_by: Optional[datetime],
+    now: datetime,
+) -> tuple[Optional[datetime], Optional[datetime]]:
+    if departure_at is not None and arrive_by is not None:
+        raise ValueError("Provide either departure_at or arrive_by, not both.")
+    departure_at = _normalise_schedule_datetime(departure_at, "departure_at")
+    arrive_by = _normalise_schedule_datetime(arrive_by, "arrive_by")
+    if arrive_by is not None and arrive_by < now.astimezone(clock.BATAM_TZ):
+        raise ValueError("arrive_by must be in the future.")
+    if departure_at is not None and departure_at < now.astimezone(clock.BATAM_TZ):
+        raise ValueError("departure_at must be in the future.")
+    return departure_at, arrive_by
+
+
+def _schedule_metadata(
+    mode: str,
+    departure_at: Optional[datetime],
+    arrive_by: Optional[datetime],
+    planned_departure: datetime,
+    estimated_arrival: datetime,
+) -> Dict[str, Any]:
+    slack = (
+        round((arrive_by - estimated_arrival).total_seconds() / 60.0, 1)
+        if arrive_by is not None else None
+    )
+    return {
+        "mode": mode,
+        "requested_departure_at": clock.iso(departure_at) if departure_at else None,
+        "requested_arrive_by": clock.iso(arrive_by) if arrive_by else None,
+        "deadline_slack_mins": slack,
+    }
+
+
+def _latest_feasible_departure(
+    solve: Any,
+    now: datetime,
+    deadline: datetime,
+    *,
+    max_search_hours: int = 48,
+    iterations: int = 8,
+) -> Dict[str, Any]:
+    """Bounded monotonic search for the latest departure meeting a deadline."""
+    local_now = now.astimezone(clock.BATAM_TZ)
+    deadline = deadline.astimezone(clock.BATAM_TZ)
+    low = max(local_now, deadline - timedelta(hours=max_search_hours))
+    high = deadline
+    best: Optional[Dict[str, Any]] = None
+    first = solve(low)
+    first_arrival = datetime.fromisoformat(first["estimated_arrival"])
+    if first_arrival > deadline:
+        raise ValueError(
+            "No feasible departure was found within the 48-hour arrive-by search window."
+        )
+    best = first
+    for _ in range(iterations):
+        candidate = low + (high - low) / 2
+        result = solve(candidate)
+        arrival = datetime.fromisoformat(result["estimated_arrival"])
+        if arrival <= deadline:
+            best = result
+            low = candidate
+        else:
+            high = candidate
+    return best
+
+
 def resolve_planned_departure(hour: int, now: Optional[datetime] = None) -> datetime:
     """Turn the UI's hour slider into a concrete future departure."""
     now = now or clock.now()
@@ -807,10 +883,39 @@ def optimize_route(corridor_id: Optional[str], vehicle_type: str, hour: int = 14
                    schedule_verified_at: Optional[str] = None,
                    approved_override_snapshot: Optional[
                        ApprovedGraphOverrideSnapshot
-                   ] = None) -> Dict[str, Any]:
+                   ] = None,
+                   departure_at: Optional[datetime] = None,
+                   arrive_by: Optional[datetime] = None,
+                   _schedule_search: bool = False) -> Dict[str, Any]:
     """Compute travel time, emissions and the best departure window."""
     now = now or clock.now()
     _validate_time_inputs(hour, weather)
+    departure_at, arrive_by = _validate_schedule_request(
+        departure_at, arrive_by, now,
+    )
+    if arrive_by is not None and not _schedule_search:
+        def solve(candidate: datetime) -> Dict[str, Any]:
+            return optimize_route(
+                corridor_id=corridor_id,
+                vehicle_type=vehicle_type,
+                hour=candidate.hour,
+                weather=weather,
+                now=now,
+                origin_id=origin_id,
+                destination_id=destination_id,
+                route_preference=route_preference,
+                schedule_verified_at=schedule_verified_at,
+                approved_override_snapshot=approved_override_snapshot,
+                departure_at=candidate,
+                _schedule_search=True,
+            )
+        result = _latest_feasible_departure(solve, now, arrive_by)
+        planned = datetime.fromisoformat(result["planned_departure"])
+        estimated = datetime.fromisoformat(result["estimated_arrival"])
+        result["scheduling"] = _schedule_metadata(
+            "ARRIVE_BY", None, arrive_by, planned, estimated,
+        )
+        return result
     preference = _validated_preference(route_preference)
     if origin_id is not None or destination_id is not None:
         if not origin_id or not destination_id:
@@ -825,7 +930,8 @@ def optimize_route(corridor_id: Optional[str], vehicle_type: str, hour: int = 14
             raise ValueError(f"Unknown corridor: {corridor_id}.")
     profile = _validated_profile(vehicle_type)
 
-    planned_departure = resolve_planned_departure(hour, now)
+    planned_departure = departure_at or resolve_planned_departure(hour, now)
+    hour = planned_departure.hour
 
     surge, surge_source = ferry_schedule.ferry_surge_for_port(
         corridor["destination_port"],
@@ -892,6 +998,10 @@ def optimize_route(corridor_id: Optional[str], vehicle_type: str, hour: int = 14
         prediction_later["current_score"] < prediction["current_score"] - 10
         and travel_later < travel_now
     )
+    # A full timestamp is an explicit user instruction; the legacy hour mode
+    # may still recommend its 30-minute optimization window.
+    if departure_at is not None:
+        defer = False
     saved_mins = max(0.0, round(travel_now - travel_later, 1))
     recommended_departure = later if defer else planned_departure
     recommended_prediction = prediction_later if defer else prediction
@@ -1062,6 +1172,15 @@ def optimize_route(corridor_id: Optional[str], vehicle_type: str, hour: int = 14
             "nearest Batam Centre departures for reference."
         )
 
+    result["estimated_arrival"] = clock.iso(arrival)
+    result["scheduling"] = _schedule_metadata(
+        "DEPART_AT" if departure_at is not None else "HOUR",
+        departure_at,
+        None,
+        recommended_departure,
+        arrival,
+    )
+
     return result
 
 
@@ -1079,6 +1198,9 @@ def optimize_free_route(
     schedule_verified_at: Optional[str] = None,
     approved_override_snapshot: Optional[ApprovedGraphOverrideSnapshot] = None,
     leg_mode: bool = False,
+    departure_at: Optional[datetime] = None,
+    arrive_by: Optional[datetime] = None,
+    _schedule_search: bool = False,
 ) -> Dict[str, Any]:
     """Optimise a local or Singapore-Batam route from free coordinates.
 
@@ -1097,6 +1219,29 @@ def optimize_free_route(
     """
     now = now or clock.now()
     _validate_time_inputs(hour, weather)
+    departure_at, arrive_by = _validate_schedule_request(
+        departure_at, arrive_by, now,
+    )
+    if arrive_by is not None and not _schedule_search:
+        def solve(candidate: datetime) -> Dict[str, Any]:
+            return optimize_free_route(
+                origin_lat=origin_lat, origin_lng=origin_lng,
+                destination_lat=destination_lat, destination_lng=destination_lng,
+                vehicle_type=vehicle_type, hour=candidate.hour, weather=weather,
+                now=now, origin_name=origin_name, destination_name=destination_name,
+                route_preference=route_preference,
+                schedule_verified_at=schedule_verified_at,
+                approved_override_snapshot=approved_override_snapshot,
+                leg_mode=leg_mode, departure_at=candidate,
+                _schedule_search=True,
+            )
+        result = _latest_feasible_departure(solve, now, arrive_by)
+        planned = datetime.fromisoformat(result["planned_departure"])
+        estimated = datetime.fromisoformat(result["estimated_arrival"])
+        result["scheduling"] = _schedule_metadata(
+            "ARRIVE_BY", None, arrive_by, planned, estimated,
+        )
+        return result
     profile = _validated_profile(vehicle_type)
     preference = _validated_preference(route_preference)
 
@@ -1131,6 +1276,7 @@ def optimize_free_route(
             route_preference=preference.key,
             schedule_verified_at=schedule_verified_at,
             approved_override_snapshot=approved_override_snapshot,
+            departure_at=departure_at,
         )
 
     src_node, src_snap_m = router.snap_to_graph(
@@ -1187,7 +1333,8 @@ def optimize_free_route(
         else None
     )
 
-    planned_departure = resolve_planned_departure(hour, now)
+    planned_departure = departure_at or resolve_planned_departure(hour, now)
+    hour = planned_departure.hour
 
     surge, surge_source = ferry_schedule.ferry_surge_for_port(
         dest_ferry_port,
@@ -1263,6 +1410,8 @@ def optimize_free_route(
         prediction_later["current_score"] < prediction["current_score"] - 10
         and travel_later < travel_now
     )
+    if departure_at is not None:
+        defer = False
     saved_mins = max(0.0, round(travel_now - travel_later, 1))
     recommended_departure = later if defer else planned_departure
     recommended_prediction = prediction_later if defer else prediction
@@ -1493,6 +1642,15 @@ def optimize_free_route(
         result["ferry_connection_note"] = (
             "Destination is not a ferry port; showing nearest Batam Centre departures for reference."
         )
+
+    result["estimated_arrival"] = clock.iso(arrival)
+    result["scheduling"] = _schedule_metadata(
+        "DEPART_AT" if departure_at is not None else "HOUR",
+        departure_at,
+        None,
+        recommended_departure,
+        arrival,
+    )
 
     return result
 
@@ -1736,6 +1894,9 @@ def optimize_multi_stop_route(
     optimize_order: bool = False,
     schedule_verified_at: Optional[str] = None,
     approved_override_snapshot: Optional[ApprovedGraphOverrideSnapshot] = None,
+    departure_at: Optional[datetime] = None,
+    arrive_by: Optional[datetime] = None,
+    _schedule_search: bool = False,
 ) -> Dict[str, Any]:
     """Chain three or more stops into one scheduled journey.
 
@@ -1751,6 +1912,26 @@ def optimize_multi_stop_route(
     """
     now = now or clock.now()
     _validate_time_inputs(hour, weather)
+    departure_at, arrive_by = _validate_schedule_request(
+        departure_at, arrive_by, now,
+    )
+    if arrive_by is not None and not _schedule_search:
+        def solve(candidate: datetime) -> Dict[str, Any]:
+            return optimize_multi_stop_route(
+                stops=stops, vehicle_type=vehicle_type, hour=candidate.hour,
+                weather=weather, now=now, route_preference=route_preference,
+                optimize_order=optimize_order,
+                schedule_verified_at=schedule_verified_at,
+                approved_override_snapshot=approved_override_snapshot,
+                departure_at=candidate, _schedule_search=True,
+            )
+        result = _latest_feasible_departure(solve, now, arrive_by)
+        planned = datetime.fromisoformat(result["planned_departure"])
+        estimated = datetime.fromisoformat(result["estimated_arrival"])
+        result["scheduling"] = _schedule_metadata(
+            "ARRIVE_BY", None, arrive_by, planned, estimated,
+        )
+        return result
     profile = _validated_profile(vehicle_type)
     preference = _validated_preference(route_preference)
 
@@ -1768,7 +1949,8 @@ def optimize_multi_stop_route(
             "roll-on/roll-off operator, or an authorised logistics-partner feed."
         )
 
-    journey_departure = resolve_planned_departure(hour, now)
+    journey_departure = departure_at or resolve_planned_departure(hour, now)
+    hour = journey_departure.hour
     leg_departure = journey_departure
     legs: List[Dict[str, Any]] = []
     shortcuts_used: List[Any] = []
@@ -1797,6 +1979,7 @@ def optimize_multi_stop_route(
             schedule_verified_at=schedule_verified_at,
             approved_override_snapshot=approved_override_snapshot,
             leg_mode=True,
+            departure_at=leg_departure,
         )
 
         travel_mins = float(leg_result.get("estimated_travel_time_mins") or 0.0)
@@ -1988,4 +2171,11 @@ def optimize_multi_stop_route(
             "The final stop is not a ferry port; showing nearest Batam Centre "
             "departures for reference."
         )
+    result["scheduling"] = _schedule_metadata(
+        "DEPART_AT" if departure_at is not None else "HOUR",
+        departure_at,
+        None,
+        journey_departure,
+        journey_arrival,
+    )
     return result
