@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import corridorHotspotCatalog from './corridor_hotspots.json';
+import corridorHotspotCatalog from '../../../backend/data/corridor_hotspots.json';
 import {
   BATAM_HOTSPOT_LIMIT,
   BATAM_HOTSPOT_REFERENCES,

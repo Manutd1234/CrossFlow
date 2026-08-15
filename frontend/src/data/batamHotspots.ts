@@ -1,4 +1,4 @@
-import corridorHotspotCatalog from './corridor_hotspots.json';
+import corridorHotspotCatalog from '../../../backend/data/corridor_hotspots.json';
 
 export const BATAM_HOTSPOT_LIMIT = 30;
 

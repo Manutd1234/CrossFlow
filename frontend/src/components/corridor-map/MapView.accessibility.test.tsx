@@ -5,15 +5,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
 import L from 'leaflet';
 import { MapView } from './MapView';
-import { corridorColor } from '../../utils/format';
 import type { Corridor, Fetched, LiveTrafficData } from '../../types';
 
 const leafletTestState = vi.hoisted(() => ({
   corridorClickHandlers: [] as Array<() => void>,
-  corridorLayers: [] as Array<Record<string, ReturnType<typeof vi.fn>>>,
   hotspotClickHandlers: [] as Array<() => void>,
   map: vi.fn(),
-  mapInstance: { fitBounds: vi.fn() } as { fitBounds: ReturnType<typeof vi.fn> },
 }));
 
 vi.mock('leaflet', () => {
@@ -21,8 +18,6 @@ vi.mock('leaflet', () => {
     const layer = {
       addTo: vi.fn(),
       bindTooltip: vi.fn(),
-      bringToFront: vi.fn(),
-      getBounds: vi.fn(() => ({ pad: vi.fn(() => 'bounds') })),
       on: vi.fn(),
       openTooltip: vi.fn(),
       remove: vi.fn(),
@@ -38,7 +33,6 @@ vi.mock('leaflet', () => {
   };
 
   const map = {
-    fitBounds: vi.fn(),
     getZoom: vi.fn(() => 11),
     remove: vi.fn(),
     scrollWheelZoom: {
@@ -49,7 +43,6 @@ vi.mock('leaflet', () => {
   };
   map.setView.mockReturnValue(map);
   leafletTestState.map.mockImplementation(() => map);
-  leafletTestState.mapInstance = map;
 
   return {
     default: {
@@ -57,11 +50,7 @@ vi.mock('leaflet', () => {
       circleMarker: vi.fn(() => makeLayer()),
       control: { zoom: vi.fn(() => makeLayer()) },
       map: leafletTestState.map,
-      polyline: vi.fn(() => {
-        const layer = makeLayer(leafletTestState.corridorClickHandlers);
-        leafletTestState.corridorLayers.push(layer);
-        return layer;
-      }),
+      polyline: vi.fn(() => makeLayer(leafletTestState.corridorClickHandlers)),
       tileLayer: vi.fn(() => makeLayer()),
     },
   };
@@ -134,11 +123,8 @@ afterEach(() => {
   if (root) act(() => root?.unmount());
   root = undefined;
   leafletTestState.corridorClickHandlers.length = 0;
-  leafletTestState.corridorLayers.length = 0;
   leafletTestState.hotspotClickHandlers.length = 0;
   leafletTestState.map.mockClear();
-  leafletTestState.mapInstance.fitBounds.mockClear();
-  vi.mocked(L.polyline).mockClear();
   vi.unstubAllGlobals();
   document.body.replaceChildren();
 });
@@ -155,7 +141,6 @@ describe('MapView traffic overlay controls', () => {
     renderIntoDom(
       <MapView
         corridors={[]}
-        routes={[]}
         trafficSnapshot={null}
         onSelectCorridor={vi.fn()}
       />,
@@ -175,7 +160,6 @@ describe('MapView traffic overlay controls', () => {
     const container = renderIntoDom(
       <MapView
         corridors={[]}
-        routes={[]}
         trafficSnapshot={null}
         onSelectCorridor={vi.fn()}
       />,
@@ -223,7 +207,6 @@ describe('MapView traffic overlay controls', () => {
     const container = renderIntoDom(
       <MapView
         corridors={TEST_CORRIDORS}
-        routes={[]}
         trafficSnapshot={null}
         onSelectCorridor={vi.fn()}
       />,
@@ -263,86 +246,11 @@ describe('MapView traffic overlay controls', () => {
       .toBe('hotspot-card-zone-simpang-jam');
   });
 
-  it('draws corridor road geometry coloured by congestion on the Corridor tab', () => {
-    const secondCorridor: Corridor = {
-      id: 'corridor-2',
-      name: 'Batu Ampar Freight Port -> Batam Centre Ferry',
-      distance_km: 8.4,
-      base_time_mins: 16,
-      live_congestion_score: 31,
-      delay_mins: 2,
-      status: 'SMOOTH',
-      risk_level: 'LOW',
-      forecast_30m: 29,
-      forecast_60m: 27,
-      trend: 'STABLE',
-      key_checkpoints: ['Batu Ampar Gate 2', 'Batam Centre'],
-    };
-    const container = renderIntoDom(
-      <MapView
-        corridors={[...TEST_CORRIDORS, secondCorridor]}
-        routes={[{
-          id: 'corridor-1',
-          name: 'Mukakuning Industrial -> Batam Centre Terminal',
-          distance_km: 9.91,
-          straight_line_km: 7.2,
-          detour_ratio: 1.38,
-          geometry: [[1.0605, 104.0303], [1.1, 104.04], [1.1318, 104.0554]],
-        }]}
-        trafficSnapshot={null}
-        onSelectCorridor={vi.fn()}
-      />,
-    );
-
-    // The Hotspots tab stays free of route lines; they belong to the panel
-    // that actually reports a corridor.
-    expect(L.polyline).not.toHaveBeenCalled();
-
-    const tabs = Array.from(
-      container.querySelectorAll<HTMLButtonElement>('[aria-label="Corridor map sections"] [role="tab"]'),
-    );
-    act(() => tabs[1].click());
-
-    // One casing plus one line for each of the five corridors.
-    expect(L.polyline).toHaveBeenCalledTimes(10);
-    const calls = vi.mocked(L.polyline).mock.calls;
-    const geometry = [[1.0605, 104.0303], [1.1, 104.04], [1.1318, 104.0554]];
-    // corridor-1 has real A* geometry: casing and stroke both trace the road.
-    expect(calls[0][0]).toEqual(geometry);
-    expect(calls[1][0]).toEqual(geometry);
-    expect(calls[1][1]).not.toHaveProperty('dashArray', expect.any(String));
-    // corridor-2 has none yet, so it falls back to a two-point placeholder and
-    // is dashed rather than passed off as a surveyed road path.
-    expect(calls[3][0]).toHaveLength(2);
-    expect(calls[3][1]).toMatchObject({ dashArray: '8, 6' });
-
-    // corridor-1 is selected, so it is emphasised and carries its own status
-    // colour rather than a single flat stroke for the whole network.
-    const styles = leafletTestState.corridorLayers.flatMap(
-      layer => vi.mocked(layer.setStyle).mock.calls.map(call => call[0]),
-    );
-    const selected = styles.find(style => style.weight === 7);
-    expect(selected?.color).toBe(corridorColor('CRITICAL'));
-    expect(selected?.opacity).toBe(1);
-    // The unselected corridor is subdued and carries its own status colour, so
-    // the map cannot disagree with the badge in the feed beneath it.
-    const unselected = styles.find(style => style.weight === 4);
-    expect(unselected?.color).toBe(corridorColor('SMOOTH'));
-    expect(unselected?.opacity).toBe(0.75);
-
-    // Clicking the feed frames the corridor the panel is describing.
-    act(() => container.querySelector<HTMLButtonElement>(
-      '[aria-label^="Select Batu Ampar"]',
-    )?.click());
-    expect(leafletTestState.mapInstance.fitBounds).toHaveBeenCalled();
-  });
-
   it('uses backend hotspot weights while retaining photo metadata', () => {
     const onSelectCorridor = vi.fn();
     const container = renderIntoDom(
       <MapView
         corridors={TEST_CORRIDORS}
-        routes={[]}
         trafficSnapshot={trafficSnapshot(71.3)}
         onSelectCorridor={onSelectCorridor}
       />,
@@ -357,7 +265,6 @@ describe('MapView traffic overlay controls', () => {
     act(() => root?.render(
       <MapView
         corridors={TEST_CORRIDORS}
-        routes={[]}
         trafficSnapshot={trafficSnapshot(77.8)}
         onSelectCorridor={onSelectCorridor}
       />,

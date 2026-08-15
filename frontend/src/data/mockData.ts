@@ -1,5 +1,5 @@
-import ferryTimetableJson from './ferry_timetable.json';
-import corridorHotspotCatalog from './corridor_hotspots.json';
+import ferryTimetableJson from '../../../backend/data/ferry_timetable.json';
+import corridorHotspotCatalog from '../../../backend/data/corridor_hotspots.json';
 import { AlertItem, CongestionZone, Corridor, EmissionsPressureModel, FerrySchedule, FerryTimetableMetadata, FerryTimetableSnapshot, ModeledEmissionsPressure, OperationsSummary, RouteLocation, Shipment } from '../types';
 import { delayFromScore, predictLocal } from '../services/localForecast';
 import {

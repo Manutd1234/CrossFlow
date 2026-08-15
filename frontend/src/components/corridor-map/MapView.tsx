@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
-import { Corridor, CorridorRoute, Fetched, LiveTrafficData } from '../../types';
-import { CORRIDOR_ENDPOINTS, MAP_NODES } from '../../data/mockData';
+import { Corridor, Fetched, LiveTrafficData } from '../../types';
+import { MAP_NODES } from '../../data/mockData';
 import {
   ArrowUpRight,
   Camera,
@@ -29,7 +29,6 @@ const BATAM_MAP_MIN_ZOOM = 10;
 
 interface MapViewProps {
   corridors: Corridor[];
-  routes: CorridorRoute[];
   trafficSnapshot: Fetched<LiveTrafficData> | null;
   onSelectCorridor: (corridorId: string) => void;
 }
@@ -54,14 +53,11 @@ function hotspotPriorityColor(priority: HotspotWatchPriority): string {
 
 export const MapView: React.FC<MapViewProps> = ({
   corridors,
-  routes,
   trafficSnapshot,
   onSelectCorridor,
 }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
-  const corridorCasingRefs = useRef<Map<string, L.Polyline>>(new Map());
-  const corridorLineRefs = useRef<Map<string, L.Polyline>>(new Map());
 
   /**
    * Selection is tracked by id and the corridor re-derived on every render.
@@ -170,92 +166,6 @@ export const MapView: React.FC<MapViewProps> = ({
     document.getElementById('map-workspace-tab-1')?.focus();
   }, [activeSelectedId, activeWorkspaceTab]);
 
-  /**
-   * Draw corridor road geometry while the Corridor tab is open.
-   *
-   * The panel reports one corridor's congestion and offers to solve its
-   * departure, so the map has to show which stretch of road that is. The
-   * lines are scoped to this tab: on the Hotspots tab they would sit on top
-   * of the 30 watch areas without belonging to anything on screen.
-   */
-  useEffect(() => {
-    const map = mapInstanceRef.current;
-    const casings = corridorCasingRefs.current;
-    const lines = corridorLineRefs.current;
-    if (!map) return;
-
-    const clearCorridorLayers = () => {
-      casings.forEach(layer => layer.remove());
-      lines.forEach(layer => layer.remove());
-      casings.clear();
-      lines.clear();
-    };
-
-    clearCorridorLayers();
-    if (activeWorkspaceTab !== 'corridor') return;
-
-    const geometryById = new Map(routes.map(route => [route.id, route.geometry]));
-    Object.entries(CORRIDOR_ENDPOINTS).forEach(([id, [from, to]]) => {
-      const geometry = geometryById.get(id);
-      // Endpoints are a placeholder only until /api/corridor-routes answers;
-      // a two-point line is never presented as a road path.
-      const latlngs: [number, number][] = geometry?.length
-        ? geometry
-        : [
-            [MAP_NODES[from].lat, MAP_NODES[from].lng],
-            [MAP_NODES[to].lat, MAP_NODES[to].lng],
-          ];
-      const isModelled = Boolean(geometry?.length);
-
-      const casing = L.polyline(latlngs, {
-        color: MAP_PALETTE.route.casing,
-        weight: 9,
-        opacity: 0.9,
-      }).addTo(map);
-      const line = L.polyline(latlngs, {
-        color: MAP_PALETTE.traffic.smooth,
-        weight: 5,
-        opacity: 1,
-        dashArray: isModelled ? undefined : '8, 6',
-      }).addTo(map);
-      line.on('click', () => {
-        focusSelectedTabOnOpenRef.current = true;
-        setSelectedId(id);
-      });
-
-      casings.set(id, casing);
-      lines.set(id, line);
-    });
-
-    return clearCorridorLayers;
-  }, [activeWorkspaceTab, routes]);
-
-  /**
-   * Recolour on each poll by restyling the existing layers rather than
-   * rebuilding them, so a 30-second refresh never resets the viewport.
-   */
-  useEffect(() => {
-    corridors.forEach(corridor => {
-      const line = corridorLineRefs.current.get(corridor.id);
-      if (!line) return;
-      const isSelected = corridor.id === activeSelectedId;
-      line.setStyle({
-        color: corridorColor(corridor.status),
-        weight: isSelected ? 7 : 4,
-        opacity: isSelected ? 1 : 0.75,
-      });
-      if (isSelected) line.bringToFront();
-      line.bindTooltip(linesTooltip([
-        { text: prettyArrow(corridor.name), strong: true },
-        {
-          text: `Index ${corridor.live_congestion_score} · ${corridor.status}`,
-          color: corridorColor(corridor.status),
-        },
-        { text: `Delay +${corridor.delay_mins} min · ${corridor.distance_km} km` },
-      ]), { sticky: true });
-    });
-  }, [activeSelectedId, corridors, routes, activeWorkspaceTab]);
-
   /** Render backend-weighted watch areas without route-line clutter. */
   useEffect(() => {
     const map = mapInstanceRef.current;
@@ -328,13 +238,6 @@ export const MapView: React.FC<MapViewProps> = ({
     document.getElementById(`hotspot-card-${focusedHotspotId}`)
       ?.scrollIntoView?.({ block: 'nearest' });
   }, [activeWorkspaceTab, focusedHotspotId]);
-  /** Frame a corridor the user picked, so the selection is visible at once. */
-  const focusCorridor = (corridorId: string) => {
-    const map = mapInstanceRef.current;
-    const line = corridorLineRefs.current.get(corridorId);
-    if (!map || !line) return;
-    map.fitBounds(line.getBounds().pad(0.2), { animate: true });
-  };
   const markPhotoUnavailable = (photoId: string) => {
     setFailedPhotoIds(current => {
       if (current.has(photoId)) return current;
@@ -553,7 +456,6 @@ export const MapView: React.FC<MapViewProps> = ({
                   focusSelectedTabOnOpenRef.current = true;
                   setSelectedId(c.id);
                   setActiveWorkspaceTab('corridor');
-                  focusCorridor(c.id);
                 }}
               >
                 <div className="corridor-feed-item__heading">
