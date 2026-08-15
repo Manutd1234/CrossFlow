@@ -4,7 +4,7 @@ import { act, useState, type ReactElement } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
 import { ROUTE_LOCATIONS } from '../../data/mockData';
-import type { RoutePreference, VehicleType } from '../../types';
+import type { VehicleType } from '../../types';
 import { RouteOptimizer } from './RouteOptimizer';
 
 vi.mock('./RoutePreviewMap', () => ({ RoutePreviewMap: () => null }));
@@ -13,7 +13,6 @@ let root: Root | undefined;
 
 function VehicleHarness() {
   const [vehicleType, setVehicleType] = useState<VehicleType>('COMMUTER');
-  const [routePreference, setRoutePreference] = useState<RoutePreference>('BALANCED');
   return (
     <RouteOptimizer
       locations={ROUTE_LOCATIONS}
@@ -27,8 +26,7 @@ function VehicleHarness() {
       setResultSource={vi.fn()}
       vehicleType={vehicleType}
       setVehicleType={setVehicleType}
-      routePreference={routePreference}
-      setRoutePreference={setRoutePreference}
+      routePreference="BALANCED"
       weather={0}
       setWeather={vi.fn()}
       hour={14}

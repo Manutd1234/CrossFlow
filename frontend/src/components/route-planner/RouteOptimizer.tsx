@@ -34,7 +34,6 @@ import {
   vehicleProfile,
   type VehicleIconKey,
 } from '../../data/vehicleCatalog';
-import { isRoutePreferenceAvailable } from '../../data/routePreferences';
 
 
 interface RouteOptimizerProps {
@@ -50,7 +49,6 @@ interface RouteOptimizerProps {
   vehicleType: VehicleType;
   setVehicleType: (v: VehicleType) => void;
   routePreference: RoutePreference;
-  setRoutePreference: (preference: RoutePreference) => void;
   weather: number;
   setWeather: (w: number) => void;
   hour: number;
@@ -171,7 +169,7 @@ function formatManeuverDistance(distanceM: number): string {
 export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
   locations, originId, setOriginId, destinationId, setDestinationId,
   result, setResult, resultSource, setResultSource,
-  vehicleType, setVehicleType, routePreference, setRoutePreference,
+  vehicleType, setVehicleType, routePreference,
   weather, setWeather, hour, setHour,
   driverAccess = false, accessToken = null,
 }) => {
@@ -260,16 +258,11 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
     Math.abs(freeOrigin.lng - freeDest.lng) < 0.0001
   );
   const canOptimizeFree = !!(freeOrigin && freeDest && !sameLocationFree);
-  const preferenceAvailable = isRoutePreferenceAvailable(
-    routePreference,
-    vehicleType,
-  );
-
   const isNamedMode = mode === 'named';
   const canOptimizeEndpoints = isNamedMode
     ? !sameLocationNamed
     : canOptimizeFree;
-  const canOptimize = canOptimizeEndpoints && preferenceAvailable
+  const canOptimize = canOptimizeEndpoints
     && waypoints.every((waypoint) => waypoint !== null);
 
   const clearRouteBenchmark = useCallback(() => {
@@ -839,9 +832,6 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
                               setVehicleMenuOpen(false);
                               if (!isSelected) {
                                 setVehicleType(profile.id);
-                                if (!isRoutePreferenceAvailable(routePreference, profile.id)) {
-                                  setRoutePreference('BALANCED');
-                                }
                                 invalidateResult();
                               }
                               vehicleTriggerRef.current?.focus();

@@ -97,7 +97,7 @@ export function App() {
   const [routeResult, setRouteResult] = useState<RouteOptimizationResult | null>(null);
   const [routeSource, setRouteSource] = useState<DataSource>('simulated');
   const [vehicleType, setVehicleType] = useState<VehicleType>('CARGO_TRUCK');
-  const [routePreference, setRoutePreference] = useState<RoutePreference>('BALANCED');
+  const routePreference: RoutePreference = 'BALANCED';
   const [weather, setWeather] = useState<number>(0);
   const [departureHour, setDepartureHour] = useState<number>(() => new Date().getHours());
   const ferryRefreshInFlightRef = useRef(false);
@@ -385,7 +385,6 @@ export function App() {
                   vehicleType={vehicleType}
                   setVehicleType={setVehicleType}
                   routePreference={routePreference}
-                  setRoutePreference={setRoutePreference}
                   weather={weather}
                   setWeather={setWeather}
                   hour={departureHour}

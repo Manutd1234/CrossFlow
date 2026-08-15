@@ -189,11 +189,6 @@
   color: var(--lagoon-text);
 }
 
-.signin-role--driver {
-  background: rgba(55, 107, 82, 0.16);
-  color: var(--palm-text);
-}
-
 .signin-divider {
   display: flex;
   align-items: center;
