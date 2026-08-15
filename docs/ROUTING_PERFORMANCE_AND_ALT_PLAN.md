@@ -15,10 +15,11 @@ MLD or Customizable Contraction Hierarchies are explicitly out of scope until
 ALT results provide evidence that a larger index and customization pipeline is
 needed.
 
-Implementation status in this workspace: benchmark harness, canonical routing
-view/cache, static edge features, directed ALT artifacts/runtime fallback,
-primary-search reuse, and bounded synchronous alternative search are
-implemented. Asynchronous delivery and learned guidance remain follow-up work.
+Implementation status in this workspace: benchmark harness, opt-in search
+diagnostics, canonical routing view/cache, static edge features, directed ALT
+artifacts/runtime fallback, primary-search reuse, and bounded synchronous
+alternative search are implemented. Asynchronous delivery and learned
+guidance remain follow-up work.
 
 The user-supplied local measurements are the initial reference points, not CI
 assertions:
@@ -88,6 +89,8 @@ Acceptance:
 - A primary-only measurement cannot accidentally include alternative searches.
 - Baseline results capture graph SHA-256, Python version, scenario, vehicle,
   preference, and cold/warm state.
+- `SearchDiagnostics` is opt-in, absent from route payloads/cache keys, and
+  reports zero new searches for a warm result-cache hit.
 
 ## Delivery 1: canonical cache key and reusable vehicle routing view
 

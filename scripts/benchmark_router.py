@@ -118,26 +118,27 @@ def _call_router(case: BenchmarkCase, include_alternatives: bool, name_tag: str)
     # clean worker and therefore does not contaminate cold-process results.
     from services import router  # type: ignore[import-not-found]
 
-    result = router.route_between(
-        case.origin,
-        case.destination,
-        include_alternatives=include_alternatives,
-        origin_name=f"{case.name} origin {name_tag}",
-        destination_name=f"{case.name} destination {name_tag}",
-        vehicle_type=case.vehicle_type,
-        network_congestion_score=case.network_congestion_score,
-        weather=case.weather,
-        route_preference=case.route_preference,
-        alternative_max_searches=(
-            ALTERNATIVE_BUDGET["max_searches"] if include_alternatives else None
-        ),
-        alternative_time_budget_ms=(
-            ALTERNATIVE_BUDGET["time_budget_ms"] if include_alternatives else None
-        ),
-        alternative_max_settled_states=(
-            ALTERNATIVE_BUDGET["max_settled_states"] if include_alternatives else None
-        ),
-    )
+    with router.search_diagnostics() as diagnostics:
+        result = router.route_between(
+            case.origin,
+            case.destination,
+            include_alternatives=include_alternatives,
+            origin_name=f"{case.name} origin {name_tag}",
+            destination_name=f"{case.name} destination {name_tag}",
+            vehicle_type=case.vehicle_type,
+            network_congestion_score=case.network_congestion_score,
+            weather=case.weather,
+            route_preference=case.route_preference,
+            alternative_max_searches=(
+                ALTERNATIVE_BUDGET["max_searches"] if include_alternatives else None
+            ),
+            alternative_time_budget_ms=(
+                ALTERNATIVE_BUDGET["time_budget_ms"] if include_alternatives else None
+            ),
+            alternative_max_settled_states=(
+                ALTERNATIVE_BUDGET["max_settled_states"] if include_alternatives else None
+            ),
+        )
     if result is None:
         raise RuntimeError(
             f"No route for {case.origin} -> {case.destination} "
@@ -149,6 +150,7 @@ def _call_router(case: BenchmarkCase, include_alternatives: bool, name_tag: str)
         "objective_cost_s": result.get("objective_cost_s"),
         "path_node_count": result.get("path_node_count"),
         "alternative_count": len(alternatives),
+        "diagnostics": diagnostics.as_dict(),
     }
 
 
@@ -241,11 +243,24 @@ def _flatten_rows(report: Mapping[str, Any]) -> Iterable[Dict[str, Any]]:
                     "mode": mode_report["mode"],
                     **measurement,
                     "process_elapsed_ms": mode_report["process_elapsed_ms"],
+                    "diagnostic_searches": (
+                        measurement.get("diagnostics", {}).get("searches_started", 0)
+                    ),
+                    "diagnostic_settled": (
+                        measurement.get("diagnostics", {}).get("settled_states", 0)
+                    ),
+                    "diagnostic_alt_attempts": (
+                        measurement.get("diagnostics", {}).get("alternative_attempts", 0)
+                    ),
                 }
 
 
 def _print_table(report: Mapping[str, Any]) -> None:
-    columns = ("case", "vehicle", "mode", "state", "elapsed_ms", "process_elapsed_ms", "alternative_count")
+    columns = (
+        "case", "vehicle", "mode", "state", "elapsed_ms",
+        "process_elapsed_ms", "alternative_count", "diagnostic_searches",
+        "diagnostic_settled", "diagnostic_alt_attempts",
+    )
     rows = list(_flatten_rows(report))
     values = []
     for row in rows:
@@ -257,6 +272,9 @@ def _print_table(report: Mapping[str, Any]) -> None:
             "elapsed_ms": f"{row['elapsed_ms']:.1f}",
             "process_elapsed_ms": f"{row['process_elapsed_ms']:.1f}",
             "alternative_count": str(row["alternative_count"]),
+            "diagnostic_searches": str(row["diagnostic_searches"]),
+            "diagnostic_settled": str(row["diagnostic_settled"]),
+            "diagnostic_alt_attempts": str(row["diagnostic_alt_attempts"]),
         })
     widths = {
         column: max(len(column), *(len(str(row[column])) for row in values))
