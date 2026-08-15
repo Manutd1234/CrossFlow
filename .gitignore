@@ -36,3 +36,12 @@ docs/*.pdf
 # Local agent/plugin tooling (not application source)
 .agents/
 skills-lock.json
+
+# Local IDE and test-runner state
+.idea/
+.pytest_cache/
+.ruff_cache/
+
+# Local uv metadata (generated for ad-hoc benchmarking/tests)
+pyproject.toml
+uv.lock

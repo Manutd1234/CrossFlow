@@ -1,0 +1,70 @@
+{
+  "format_version": 1,
+  "graph_revision": "d6407fe44e1c708fc3029cb3c57e0ec54c024f87e3e10eac27170a133eede54b",
+  "graph_schema_version": 3,
+  "indexes": [
+    {
+      "edge_count": 230994,
+      "landmarks": [
+        7656141157,
+        6132390461,
+        3492580363,
+        6494156540,
+        6646951950,
+        6130815091,
+        6132059291,
+        703891106
+      ],
+      "node_count": 107510,
+      "path": "alt-0ac9ada177c11d236e17.npz",
+      "profiles": [
+        "CITY_BUS",
+        "COMMUTER",
+        "ELECTRIC_CAR",
+        "EXPRESS_VAN",
+        "MINIBUS"
+      ],
+      "topology_id": "0ac9ada177c11d236e17"
+    },
+    {
+      "edge_count": 209354,
+      "landmarks": [
+        7656141157,
+        6132390461,
+        3492580363,
+        6494156540,
+        7612763351,
+        6130815091,
+        6132059291,
+        703891106
+      ],
+      "node_count": 98413,
+      "path": "alt-4c4cae65e922dc16f9c2.npz",
+      "profiles": [
+        "CARGO_TRUCK",
+        "LIGHT_TRUCK"
+      ],
+      "topology_id": "4c4cae65e922dc16f9c2"
+    },
+    {
+      "edge_count": 235211,
+      "landmarks": [
+        7656141157,
+        6132390461,
+        3492580363,
+        6494156540,
+        6646951950,
+        6130815091,
+        6132059291,
+        703891106
+      ],
+      "node_count": 109267,
+      "path": "alt-a29859c63b1dabe24a02.npz",
+      "profiles": [
+        "MOTORCYCLE"
+      ],
+      "topology_id": "a29859c63b1dabe24a02"
+    }
+  ],
+  "landmark_count": 8
+}
