@@ -1,0 +1,343 @@
+# ⚡ CrossFlow AI — Smart Mobility & Cross-Border Logistics Platform
+
+> **Batam-Singapore Hackathon 2026 Submission**  
+> **Track 2: Ease of Living & Sustainability — Smart Mobility Flow**
+
+CrossFlow AI is a smart-mobility and cross-border logistics planning platform
+for the **Batam-Singapore Corridor**. It combines road routing, planning-grade
+congestion forecasts and published ferry schedules in a door-to-door journey
+view. The product distinguishes official reference data, optional observations
+and modelled estimates; it does not present a timetable, queue estimate or
+forecast as live unless a connected source actually supplies a fresh
+observation.
+
+---
+
+## 🌟 Key Features
+
+1. **Vehicle-Aware Road Routing (OpenStreetMap + A\*)**
+   - Batam road-following paths are computed over a 115,320-node schema-v3 union-retention graph of mapped motor roads. Each request selects a mutually reachable core for its vehicle mode; the committed metadata preserves access, motorcycle/HGV rules, surface, width, height, weight, speed and lane tags when OSM publishes them. A stateful A\* supports five audited objectives: **Balanced**, **Fastest**, **Shortest**, **Easy**, and **Local shortcuts**, with vehicle-specific time, distance, congestion and road-quality weights. Missing physical tags use declared conservative fallbacks rather than invented measurements. Singapore and cross-border road-access legs request OSRM routes over OpenStreetMap; an unavailable road service produces an explicitly labelled continuity estimate, not turn-by-turn navigation.
+2. **Congestion Forecasting & Telemetry**
+   - 30- and 60-minute planning forecasts cover **30 representative Batam mobility hotspots: 20 critical-priority and 10 heavy-priority locations**. The split is a product watch-list taxonomy, not an official Batam classification or a claim about current conditions. Scores respond to time of day, weekday/weekend, weather, local baselines and ferry-departure density. Each hotspot is accompanied by a dated reference photograph and is labelled modelled unless a successful point observation supplies its own source and timestamp.
+3. **Singapore ↔ Batam Door-to-Door Journey Solver**
+   - Free-text or map-picked endpoints can be anywhere in the supported Singapore and Batam bounds. A cross-border plan is composed as **Singapore road access → published ferry terminal corridor → Batam road access**, or the reverse. Candidate crossings are restricted to published terminal pairs through HarbourFront or Tanah Merah and Batam Centre, Harbour Bay, Sekupang or Nongsa Pura; the solver does not invent informal small-channel crossings. Every leg carries its own provider, geometry and limitation. Ferry lines are channel-aware planning geometry, not an observed vessel track, while the selected departure is asserted only when the bundled operator snapshot contains a matching sailing. Same-island Batam journeys retain the full local A\* objectives and alternatives.
+4. **Ferry & Port Intelligence**
+   - Source-dated operator timetable snapshots cover published Batam-Singapore sailings, alongside official BP Batam terminal reference information. Passenger-queue and processing values are **schedule-informed planning estimates** derived from departure density and a Batam time-of-day profile. They are always marked non-observed because no documented public live Batam terminal queue API is connected. The UI retains the operator or terminal link and asks travellers to verify and book before departure.
+5. **Operations & Carbon Analytics Dashboard**
+   - Bottleneck detection and dispatch alerts grounded in modelled corridor state, plus a modelled avoidable-emissions opportunity with published illustrative assumptions. These are scenario outputs, not observed or measured operational performance.
+6. **Built-in Stage Pitch Deck**
+   - Interactive 2-slide presentation mode built into the header for live demonstration.
+
+---
+
+## 🔍 Data & Model Provenance
+
+Every operational card is intended to answer three questions: **where did this
+come from, when was it valid, and is it observed or estimated?** API responses
+carry provenance fields, and the UI reads them instead of inferring that a
+successful request must be live.
+
+| Component | Source | Status |
+|---|---|---|
+| Batam road network | OpenStreetMap via Overpass (ODbL 1.0) | **Real** |
+| Batam route geometry, distances, alternatives and manoeuvres | Computed from the committed OSM graph | Mapped road plan |
+| Singapore/cross-border road-access legs | OSRM over OpenStreetMap when reachable | Mapped road plan; labelled continuity estimate when unavailable |
+| Vehicle, route-objective, congestion and weather weights | Published planning assumptions over OSM edges | Modelled |
+| Route-learning observation store | Admin-authorized, map-matched first-party traversals keyed to the exact committed OSM graph | Optional; empty until verified telemetry is ingested |
+| Landmark coordinates | Verified against OSM features | **Real** |
+| Point traffic observations | TomTom Traffic Flow only when a server-side key returns a fresh response | Optional commercial observation; not Batam-government telemetry |
+| 30 Batam planning hotspots (20 critical / 10 heavy) | Representative locations, local-area profiles and synthetic Random Forest inputs | Modelled watch-list priorities; not official severity labels |
+| Legacy congestion charts | Rolling, versioned 14-day Batam-time synthetic seed plus five-minute snapshots of modelled corridor telemetry | Non-observed; API reports source counts, freshness and storage durability |
+| Typed spatial speed history | Numeric, geocoded, timezone-aware `V_actual` and `V_free_flow` records with fixed source policy | Optional; idempotent and provenance-labelled, stored in local SQLite or the server-only Supabase adapter when explicitly configured |
+| Operations bottlenecks and emissions opportunity | Synthetic corridor scenario, deterministic emissions assumptions and published ferry timetable snapshot | Modelled/illustrative; not observed, live or measured |
+| Ferry departure slots | Source-dated published timetables from BatamFast, Sindo, Majestic and Horizon; official source links retained | Last-known-good schedule snapshot, not live operations |
+| Passenger queue and processing time | Published departure density × Batam time-of-day planning profile | Schedule-informed estimate; not observed and not an official wait time |
+| Terminal identity, location and facilities | BP Batam official passenger-port and terminal pages | Official reference information; not live occupancy |
+| Ferry vessels, seats, gates, berths, cancellations | No licensed public machine feed is connected | Unavailable; never fabricated |
+| Cargo consignments | Illustrative demo dataset | Simulated |
+
+The traffic score models network demand and queue conditions, while the
+separately reported weather term models safe-speed loss on wet roads. They are
+kept separate in each route's cost breakdown so the estimate can be audited.
+Historical metadata sets `observed` only when every sample in the requested
+window is observed; `contains_observed_samples` identifies mixed windows.
+
+**On the model:** the bundled `RandomForestRegressor` remains a reproducible
+synthetic cold-start model. The richer typed path can retrain it only from
+validated spatial speed observations, using server-owned source-confidence
+weights and a chronological holdout. Tree dispersion supplies empirical mean,
+standard deviation, P10 and P90 outputs. Calibration metadata publishes the
+P10–P90 coverage target and observed coverage, mean interval width, and an
+empirical ensemble CRPS approximation. These are random-forest ensemble
+statistics—not Bayesian intervals, a GNN, or evidence of learned road
+topology.
+
+The bundled R², MAE, RMSE, coverage and CRPS values measure how well the model
+reproduces its synthetic generator; they are not real-world Batam accuracy.
+Every retrain publishes source counts, source-weight totals, observed-row
+counts, defaults used and validation scope. An imminent published sailing is a
+separate, capped 15-point post-model adjustment with 45-minute exponential
+decay because ferry proximity is not persisted as an observed traffic feature.
+A commercial TomTom adapter can provide a current point speed when configured,
+but it does not turn the hotspot catalogue or other forecasts into observed
+ground truth.
+
+Likewise, the queue cards deliberately remain estimates. Public official pages
+provide terminal descriptions, aggregate passenger volumes, schedules and
+process guidance, but no documented public feed of Batam passenger wait,
+immigration processing, berth occupancy, gates, seats or cancellations was
+found. A successful page scrape would not itself make a value authoritative or
+grant redistribution rights.
+
+### Authoritative references and integration boundaries
+
+- **Batam traffic:** [Dishub Batam traffic cameras](https://dishub.batam.go.id/cctv-lalu-lintas-kota-batam/), the [2024 Dishub performance report](https://dishub.batam.go.id/wp-content/uploads/sites/3/2025/02/DISHUB_LAKIP_2024.pdf) and the [2021–2026 strategic plan](https://dishub.batam.go.id/wp-content/uploads/sites/3/2025/02/DISHUB_RENSTRA2021-2026.pdf). The 2024 report records the official ATCS/intersection inventory; it does not publish current congestion labels. The camera page has no documented public machine API, so a camera can be called current only after a successful timestamped fetch.
+- **Batam open data:** [Satu Data Kota Batam](https://satudata.batam.go.id/data/) publishes downloadable civic datasets, and [BP Batam Open Data](https://data.bpbatam.go.id/dataset/?groups=transportasi) publishes agency datasets. The available road and infrastructure series are useful context, not a live segment-speed feed.
+- **Ferry terminals and port totals:** [BP Batam passenger ports](https://batamport.bpbatam.go.id/pelabuhan-penumpang/) and its official pages for [Batam Centre](https://batamport.bpbatam.go.id/batam-centre/), [Sekupang](https://batamport.bpbatam.go.id/sekupang/), [Harbour Bay](https://batamport.bpbatam.go.id/harbour-bay/) and [Nongsapura](https://batamport.bpbatam.go.id/nongsapura/) provide terminal identity, facilities, routes and published aggregates. [B-SIMS](https://b-sims.bpbatam.go.id/) is an account-based port-service system for authorized users, not a public passenger-status API.
+- **Ferry schedules:** “Check Schedules” validates six reviewed official pages: recurring operator timetables from [BatamFast](https://www.batamfast.com/tripschedule/index.ashx), [Sindo Ferry](https://www.sindoferry.com.sg/), [Majestic Fast Ferry](https://www.majesticfastferry.com.sg/) and [Horizon Fast Ferry](https://horizonfastferry.com.sg/), the [BP Batam passenger-terminal catalogue](https://batamport.bpbatam.go.id/pelabuhan-penumpang/), and the date-bound [Singapore Cruise Centre ferry board](https://singaporecruise.com.sg/schedule/ferries/). BP Batam supplies terminal context rather than departure slots. SCC rows are validated as same-day operations and never overwrite recurring operator timetables. Deployments remain responsible for the SCC site's stated linking/reuse terms.
+- **Passenger processing:** the [Singapore Cruise Centre departure guide](https://singaporecruise.com.sg/departure-arrival/ferry/) publishes check-in and gate windows, while [Singapore ICA checkpoint information](https://www.ica.gov.sg/about-us/our-checkpoints) describes the official checkpoints. Neither source publishes a Batam-terminal live wait-time API.
+- **Singapore road data:** [SLA OneMap](https://www.onemap.gov.sg/apidocs/) supports authoritative Singapore search and routing, and [LTA DataMall](https://datamall.lta.gov.sg/content/datamall/en/dynamic-data.html) offers key-gated traffic speed bands, incidents and images. These are integration options rather than evidence that the current browser fallback is live; OneMap routing also does not extend into Batam.
+- **Maritime logistics:** [MPA OCEANS-X](https://oceans-x.mpa.gov.sg/) and the [Singapore Maritime Data Hub vessel-arrivals API](https://sg-mdh.mpa.gov.sg/vessel-arrivals/apis) provide subscribed maritime data. They can enrich cargo and vessel planning, but they do not provide Batam passenger queue minutes.
+- **Reference photographs:** hotspot and terminal photographs are historical orientation aids, never congestion observations. Reusable examples include [Jalan Sudirman](https://commons.wikimedia.org/wiki/File:Jalan_Panglima_Besar_Sudirman,_Batam,_Riau_Islands.jpg), [Batam Centre](https://commons.wikimedia.org/wiki/File:Terminal_Ferry_Batam_Centre.JPG), [Sekupang](https://commons.wikimedia.org/wiki/File:Sekupang_Ferry_Terminal.jpg) and [Harbour Bay](https://commons.wikimedia.org/wiki/File:Harbour_Bay_Ferry_terminal.jpg). The hotspot catalogue retains the Commons author, licence, capture year and source. BP Batam page imagery has no clear reuse licence and requires permission before redistribution.
+
+Published sailing times use the terminal's local timezone: Singapore is SGT
+(UTC+8), while Batam is WIB (UTC+7). The optimizer normalizes timestamps for
+calculation and should always display the local zone on a cross-border leg.
+
+The protected route-learning store accepts only clear-weather, low-congestion
+actual traversal observations from allowlisted map-matching pipelines. Inputs
+are exact directed OSM edge keys tied to the SHA-256 of the committed graph;
+stale graph observations are isolated automatically. Its API schema has no
+route geometry, polyline, provider route, or provider duration fields. Google
+Routes content is never accepted, cached, or persisted. A\* captures one
+immutable snapshot per calculation and applies it only on clear-weather edges
+whose network and local congestion scores are at most 25. Every response
+publishes the baseline-versus-learned adjustment, model revision, gate state,
+and selected-edge audit; external provider geometry strips those local claims.
+
+An optional `POST /api/route-benchmark` comparison is disabled by default. It
+uses a dedicated server-only Google Routes v2 key and sends coordinates to
+Google only when the explicit enable flag is set. The field mask permits only
+duration, distance and route labels—never geometry, polylines or steps—and the
+response is `private, no-store`, cannot be persisted or used for training, and
+cannot be drawn over the OpenStreetMap/CARTO map. Shortest-distance reference
+routes are clearly labelled experimental. The frontend action is separately
+opted in only when `VITE_ENABLE_GOOGLE_BENCHMARK=true`; it renders attributed
+distance/duration text in its own card and never sends provider content to the
+Leaflet map or browser storage.
+
+The staged activation and camera-feed path is documented in
+[`docs/LIVE_TRAFFIC_AND_FEED_PLAN.md`](docs/LIVE_TRAFFIC_AND_FEED_PLAN.md).
+
+### Routing-intelligence backend
+
+The refactored backend keeps graph search, traffic validation, shortcut review,
+model inference, and persistence behind typed service boundaries. The local
+Batam solver uses vehicle-constrained, turn-aware A* and publishes the
+four-component edge objective
+`time + distance + congestion + road-quality penalty` with per-vehicle weights
+and explicit fallbacks for unrated roads. Crowd-sourced route tips are parsed
+only from a server-owned pinned-source policy and remain inactive until a human
+review produces an immutable approval for the current graph revision.
+
+Typed spatial history stores timezone-aware `V_actual / V_free_flow` records
+with fixed provenance and idempotent keys. The probabilistic random-forest
+contract publishes empirical quantiles and calibration metadata, while a
+transparent ferry-schedule adjustment stays separate from observed traffic.
+Local SQLite remains the development default; optional server-only Supabase
+durability is available through
+[`backend/data/routing_intelligence.sql`](backend/data/routing_intelligence.sql).
+See [Routing Intelligence Architecture](docs/ROUTING_INTELLIGENCE_ARCHITECTURE.md)
+for the cost units, vehicle constraints, source-policy schema, retention,
+review/promotion flow, RLS boundary, cache, and fallback behavior.
+
+---
+
+## 🏗️ Technology Stack
+
+| Component | Technology | Purpose |
+|---|---|---|
+| **Frontend UI** | React 18, Vite, TypeScript | Modern responsive dashboard |
+| **Styling & Design** | Vanilla CSS Glassmorphism, Outfit & Inter Fonts | Bright light-mode aesthetic, micro-animations |
+| **Interactive Maps** | Leaflet JS + CartoDB Voyager Tiles | Singapore-road, ferry-corridor and Batam-road leg visualization |
+| **Road Graph & Routing** | Committed OpenStreetMap Batam graph + stateful A\*; OSRM/OSM for online access legs | Per-leg road geometry with source-labelled continuity fallback |
+| **Multimodal Composition** | FastAPI journey composer + source-dated operator timetable snapshot | Legal terminal-pair selection, transfer timing and per-leg provenance |
+| **Data Visualization** | Recharts | Congestion trend charts & emissions reduction bars |
+| **Backend & AI Engine** | Python 3.12–3.14, FastAPI, uvicorn | High-performance REST API |
+| **Machine Learning** | scikit-learn Random Forest, NumPy | Synthetic cold start plus optional typed spatial retraining, empirical tree quantiles and calibration metadata |
+
+---
+
+## 📁 Project Structure
+
+```
+├── frontend/    # React 18 + Vite + TypeScript dashboard and Vitest checks
+├── backend/     # FastAPI + scikit-learn API and backend regression runner
+├── scripts/     # Local launcher, graph tooling, and optional training jobs
+├── .github/     # GitHub Actions CI
+└── docs/        # Pitch outline & hackathon reference material
+```
+
+---
+
+## 🚀 Quick Start
+
+### Prerequisites
+- Node.js v20.19+ (or v22.12+)
+- Python 3.12+
+
+### One command
+
+```bash
+./scripts/dev.sh
+```
+
+Installs anything missing (Python venv + backend requirements, and
+`npm ci`), then runs the backend on **:8000** and the frontend on
+**:3000** together. Ctrl+C stops both.
+
+| | |
+|---|---|
+| Dashboard | <http://localhost:3000> |
+| API docs | <http://localhost:8000/docs> |
+
+Options: `--install-only`, `--backend-only`, `--frontend-only`, `--clean`,
+and `--force-restart`.
+
+---
+
+## 🔧 Manual Setup
+
+### 1. Frontend Web Application Setup
+```bash
+cd frontend
+
+# Install the locked Node dependencies
+npm ci
+
+# Launch frontend dev server on http://localhost:3000
+npm run dev
+```
+
+### 2. Python AI Backend Setup
+```bash
+# Create & activate virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
+
+# Install backend dependencies
+pip install -r backend/requirements.txt
+
+# Run backend API server on http://localhost:8000
+python backend/main.py
+```
+
+### 3. Run the same verification as CI
+
+```bash
+# Frontend typecheck/build, lint, and regression tests
+cd frontend
+npm run lint
+npm test
+npm run build
+cd ..
+
+# Backend regression checks and launcher validation
+.venv/bin/python backend/test_backend.py
+bash -n scripts/dev.sh
+```
+
+The verification suite covers A\* path validity and preference-aware admissibility, all
+eight vehicle profiles, all five route-objective catalogs and API validation,
+physical-distance versus weighted-objective and modeled-ETA units, requested-hour and
+weather weighting, spatial congestion decay and caching, all named planner
+pairs, free-point routing and browser fallback, road alternatives, manoeuvres,
+roundabouts, access barriers, verified traversal ingestion isolation,
+idempotency, graph revisioning, immutable learning snapshots, clear-road gates,
+physical speed clamping, learned-path cache invalidation and selected-edge-only
+shortcut audits, the opt-in metric-only Google benchmark request/parser,
+server-key isolation and no-store failure behavior, timezone-safe Batam schedules, ferry boarding
+cutoffs, determinism, and dashboard consistency invariants. GitHub Actions runs
+these commands for every push and pull request.
+
+### 4. Optional configuration
+
+The application runs with simulated traffic and local OSM routing when no
+secrets are configured. Set only the integrations you use:
+
+| Variable | Purpose |
+|---|---|
+| `VITE_API_BASE_URL` | API origin for a split frontend/backend deployment; local Vite and the bundled Vercel config use same-origin `/api` by default. |
+| `VITE_ENABLE_GOOGLE_BENCHMARK` | Must equal `true` to show the optional text-only “Compare online” action. This is a UI gate, never an API key; the server gate and dedicated server key below are also required. |
+| `TOMTOM_API_KEY` | Optional TomTom flow-segment layer used by `/api/live-traffic`. |
+| `SUPABASE_URL` + `SUPABASE_SECRET_KEY` (or legacy `SUPABASE_SERVICE_ROLE_KEY`) | Server-only Supabase credentials. Apply `backend/data/ferry_freshness.sql` for shared ferry verification, and optionally `backend/data/routing_intelligence.sql` for durable typed traffic observations and shortcut review/approval records. Ferry freshness fails closed in production when required durability is unavailable; routing intelligence remains optional and must report its actual storage boundary. Never expose the secret/service-role key. Official `*.supabase.co` hosts are accepted; set `CROSSFLOW_SUPABASE_ALLOWED_HOST` only for an audited self-hosted HTTPS origin. |
+| `CROSSFLOW_REQUIRE_DURABLE_FERRY_FRESHNESS` | Durability gate. `vercel.json` pins it to `1` for Preview and Production so shared freshness cannot silently degrade to process memory. Use `0` only for local committed-snapshot fallback. |
+| `CROSSFLOW_HISTORY_DB` | Writable SQLite path for legacy congestion history and typed spatial speed observations. API metadata distinguishes a persistent file from serverless `/tmp` or memory fallback. |
+| `CROSSFLOW_SPATIAL_HISTORY_RETENTION_DAYS` | Typed spatial-observation retention. Defaults to `1825` (five years); accepted values are `365` through `7300`. |
+| `CROSSFLOW_ROUTING_INTELLIGENCE_STORE` | `local` by default. Set to `supabase` only after applying `backend/data/routing_intelligence.sql`; ordinary ferry Supabase credentials never implicitly probe this optional schema. |
+| `CROSSFLOW_TRAFFIC_INGEST_SOURCE` | Server-owned identity for the admin-only spatial-observation endpoint (`loop_sensor`, `probe_gps`, `tomtom_live`, or `verified_traffic_observation`). Request bodies cannot self-assign verified provenance. |
+| `CROSSFLOW_SHORTCUT_REVIEWER_ID` | Server-owned reviewer identity recorded on immutable shortcut approvals. The request body cannot spoof this audit field. |
+| `CROSSFLOW_SHORTCUT_SOURCE_POLICY` | Server-owned JSON allowlist of exact pinned HTTPS sources, MIME types, confidence ceilings, and resource limits. Blank disables source fetching. Parsed tips always enter `REVIEW_REQUIRED`; this variable cannot enable activation. |
+| `CROSSFLOW_ROUTE_PROVIDER` | `local` by default. The legacy `supabase` value fails fast because its RPC cannot prove vehicle constraints. Only `supabase_v2_constrained` may be enabled after a replacement RPC returns the complete constraint, navigation and alternative-route contract; all failures retain the local OSM route. |
+| `CROSSFLOW_ROUTE_LEARNING_DB` | Writable SQLite path for verified traversal observations. A configured persistent volume is durable; serverless `/tmp` is explicitly reported as ephemeral. |
+| `CROSSFLOW_ADMIN_TOKEN` | Server-only token for protected ingestion, review/promotion, persistence status and retraining operations through the `X-CrossFlow-Admin-Token` header. An unset token denies access; do not reuse a Supabase credential. |
+| `CROSSFLOW_ENABLE_GOOGLE_BENCHMARK` | Must equal `true` to expose the optional, text-only `/api/route-benchmark` comparison. Disabled by default. |
+| `CROSSFLOW_GOOGLE_ROUTES_API_KEY` | Dedicated server-only Google Routes v2 key for the opt-in benchmark. Browser-prefixed and legacy Google keys are never read. |
+| `SUPABASE_DB_URL` | Optional PostgreSQL URL used only by ingestion/training scripts. Never expose it to the frontend. |
+
+### 5. Optional training tooling
+
+Training dependencies are deliberately separate from the production API so
+Pandas, Modal, and PostgreSQL drivers do not bloat serverless deployments:
+
+```bash
+pip install -r scripts/requirements-training.txt
+python scripts/train_local_mac.py
+
+# Optional Modal jobs
+modal run scripts/train_traffic_model.py
+modal run scripts/tune_hyperparams.py
+```
+
+With no database URL, training writes a clearly named synthetic demo artifact.
+The hourly database synchronizer only consumes a model trained from Supabase.
+Hyperparameter tuning uses CPU workers and defaults to 12 trials (hard-capped at
+24 via `CROSSFLOW_TUNING_TRIALS`) to prevent accidental large GPU fan-outs.
+
+### 6. Rebuilding the road graph (optional)
+
+The graph is committed, so this is only needed to refresh OSM data:
+```bash
+.venv/bin/python scripts/build_graph.py
+```
+
+### 7. Navigation scope
+
+CrossFlow provides a corridor-planning preview, not certified live navigation.
+The committed Batam graph filters explicit prohibited/private motor access and
+hard barriers and retains mode, width, height, weight, surface and smoothness
+tags for runtime checks when OSM supplies them. Missing tags and
+turn-restriction relations remain unknown and cannot certify legal clearance.
+Online Singapore and cross-border road legs depend on OSRM; the offline
+continuity connector is explicitly not turn-by-turn road geometry. Vehicle
+selection changes road-leg preferences, modelled speed, congestion/weather
+sensitivity, terminal handling and emissions, but does not certify permission
+to carry the vehicle on a passenger ferry.
+
+Cross-border results use only listed terminal pairs and published sailing
+evidence. Their sea geometry is a corridor visualization, not a navigational
+track, and the schedule snapshot does not establish a current gate, seat,
+cancellation, immigration wait or vehicle/freight acceptance. Heavy freight,
+dangerous goods and accompanied vehicles require a separate authorized cargo
+or operator workflow. Always verify the sailing and obey posted road, port and
+border requirements.
+
+---
+
+## 📊 Judging Criteria Alignment
+
+- **Problem Understanding & Relevance**: Covers 30 representative Batam mobility pressure points, including Simpang Kabil, Mukakuning Industrial and Batu Ampar Port, while connecting Singapore origins and destinations through the ferry interface. The priority labels are planning outputs, not claims of current official severity.
+- **Technical Execution & Engineering Quality**: TypeScript React frontend + FastAPI service, stateful vehicle- and preference-aware A\* over a committed Batam OSM graph, per-leg SG–ferry–Batam journey composition, and a browser fallback that preserves source and limitation labels when online routing is unavailable.
+- **Innovation & Creativity**: Cross-modal departure planning couples road access with a matching published ferry window while keeping schedule evidence distinct from live operating status.
+- **Impact & Feasibility**: Models roughly **540 kg CO2 per day** of avoidable idle emissions across five corridors, under assumptions published in the API response (40 advised trips/corridor/hour, 35% of queue delay avoidable, 1.8 kg/h idle burn). These are modelled projections from a simulated traffic layer, not measured outcomes.
+- **Presentation & Demo**: Interactive stage pitch deck, responsive light-theme UI, and honest data-provenance labelling throughout.

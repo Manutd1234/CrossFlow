@@ -1,0 +1,273 @@
+{
+  "schema_version": 1,
+  "snapshot_id": "published-batam-singapore-timetables-calendar-audited-2026-08-13",
+  "timezone": "Asia/Jakarta",
+  "last_verified_at": "2026-08-13T00:30:50+07:00",
+  "status": "published_schedule_snapshot",
+  "live_board_url": "https://singaporecruise.com.sg/schedule/ferries/",
+  "limitations": "Published recurring departure slots are not a live feed for operations, cancellations, vessels, berths, gates, capacity or seat availability. Schedules may change without notice; verify with the operator before travel. This snapshot includes daily and weekend-safe slots; public-holiday, weekday-specific and conflicting operator exceptions are explicitly audited but excluded rather than guessed.",
+  "sources": [
+    {
+      "source_id": "batamfast-2026-04-11",
+      "operator": "BatamFast",
+      "schedule_url": "https://www.batamfast.com/tripschedule/index.ashx",
+      "booking_url": "https://www.batamfast.com/",
+      "effective_from": "2026-04-11",
+      "last_verified_at": "2026-08-13T00:30:50+07:00",
+      "calendar_note": "Daily routes are represented. Numbered weekday/weekend conditions and suspended rows are excluded unless the current schema can represent them without overstatement."
+    },
+    {
+      "source_id": "sindo-current-2026-08-10",
+      "operator": "Sindo Ferry",
+      "schedule_url": "https://app.sindoferry.com.sg/schedule/",
+      "booking_url": "https://app.sindoferry.com.sg/",
+      "effective_from": null,
+      "last_verified_at": "2026-08-13T00:30:50+07:00",
+      "calendar_note": "Daily rows and icon-qualified weekend additions are separated; the Sunday-only Tanah Merah to Batam Centre row is explicitly audited but excluded from schema-v1 routing."
+    },
+    {
+      "source_id": "majestic-2026-05-15",
+      "operator": "Majestic Fast Ferry",
+      "schedule_url": "https://www.majesticfastferry.com.sg/",
+      "booking_url": "https://www.majesticfastferry.com.sg/Booking",
+      "effective_from": "2026-05-15",
+      "last_verified_at": "2026-08-13T00:30:50+07:00",
+      "calendar_note": "Daily/common and Saturday-Sunday additions are represented. Monday-only, Friday-only and public-holiday exceptions are explicitly audited but excluded from schema-v1 routing."
+    },
+    {
+      "source_id": "horizon-current-2026-08-10",
+      "operator": "Horizon Fast Ferry",
+      "schedule_url": "https://horizonfastferry.com.sg/",
+      "booking_url": "https://horizonfastferry.com.sg/",
+      "effective_from": null,
+      "last_verified_at": "2026-08-13T00:30:50+07:00",
+      "calendar_note": "Official site describes these departures as daily."
+    }
+  ],
+  "services": [
+    {
+      "service_id": "batamfast-bct-hf",
+      "operator": "BatamFast",
+      "departure_port": "Batam Centre",
+      "arrival_port": "HarbourFront SG",
+      "source_id": "batamfast-2026-04-11",
+      "estimated_crossing_mins": 55,
+      "daily_departures": ["06:00", "07:00", "08:20", "09:50", "11:10", "12:50", "14:10", "15:20", "16:30", "17:40", "19:00", "20:30"],
+      "weekend_additions": []
+    },
+    {
+      "service_id": "batamfast-hf-bct",
+      "operator": "BatamFast",
+      "departure_port": "HarbourFront SG",
+      "arrival_port": "Batam Centre",
+      "departure_timezone": "Asia/Singapore",
+      "source_id": "batamfast-2026-04-11",
+      "estimated_crossing_mins": 55,
+      "daily_departures": ["07:40", "08:40", "09:30", "10:50", "12:30", "14:20", "15:30", "16:50", "18:00", "19:10", "20:20", "21:40"],
+      "weekend_additions": []
+    },
+    {
+      "service_id": "batamfast-npt-tm",
+      "operator": "BatamFast",
+      "departure_port": "Nongsa Pura",
+      "arrival_port": "Tanah Merah SG",
+      "source_id": "batamfast-2026-04-11",
+      "estimated_crossing_mins": 45,
+      "daily_departures": ["06:00", "08:00", "09:30", "12:10", "14:20", "15:40", "17:30", "20:00"],
+      "weekend_additions": []
+    },
+    {
+      "service_id": "batamfast-tm-npt",
+      "operator": "BatamFast",
+      "departure_port": "Tanah Merah SG",
+      "arrival_port": "Nongsa Pura",
+      "departure_timezone": "Asia/Singapore",
+      "source_id": "batamfast-2026-04-11",
+      "estimated_crossing_mins": 45,
+      "daily_departures": ["08:00", "08:50", "10:50", "12:00", "14:20", "16:20", "18:30", "20:20"],
+      "weekend_additions": []
+    },
+    {
+      "service_id": "sindo-bct-hf",
+      "operator": "Sindo Ferry",
+      "departure_port": "Batam Centre",
+      "arrival_port": "HarbourFront SG",
+      "source_id": "sindo-current-2026-08-10",
+      "estimated_crossing_mins": 60,
+      "daily_departures": ["06:00", "07:20", "08:40", "10:40", "12:40", "14:00", "15:10", "16:10", "17:20", "18:20", "19:30", "20:20"],
+      "weekend_additions": []
+    },
+    {
+      "service_id": "sindo-hf-bct",
+      "operator": "Sindo Ferry",
+      "departure_port": "HarbourFront SG",
+      "arrival_port": "Batam Centre",
+      "departure_timezone": "Asia/Singapore",
+      "source_id": "sindo-current-2026-08-10",
+      "estimated_crossing_mins": 60,
+      "daily_departures": [
+        "08:00",
+        "09:00",
+        "10:20",
+        "12:00",
+        "13:20",
+        "14:50",
+        "16:10",
+        "17:20",
+        "18:30",
+        "19:40",
+        "20:45",
+        "21:50"
+      ],
+      "weekend_additions": []
+    },
+    {
+      "service_id": "sindo-skp-hf",
+      "operator": "Sindo Ferry",
+      "departure_port": "Sekupang",
+      "arrival_port": "HarbourFront SG",
+      "source_id": "sindo-current-2026-08-10",
+      "estimated_crossing_mins": 50,
+      "daily_departures": ["06:00", "07:00", "08:30", "11:20", "12:30", "15:20", "17:40", "18:30"],
+      "weekend_additions": ["13:50"]
+    },
+    {
+      "service_id": "sindo-hf-skp",
+      "operator": "Sindo Ferry",
+      "departure_port": "HarbourFront SG",
+      "arrival_port": "Sekupang",
+      "departure_timezone": "Asia/Singapore",
+      "source_id": "sindo-current-2026-08-10",
+      "estimated_crossing_mins": 50,
+      "daily_departures": [
+        "08:30",
+        "10:00",
+        "11:10",
+        "14:10",
+        "17:30",
+        "18:10",
+        "19:30"
+      ],
+      "weekend_additions": ["16:00"]
+    },
+    {
+      "service_id": "sindo-bct-tm",
+      "operator": "Sindo Ferry",
+      "departure_port": "Batam Centre",
+      "arrival_port": "Tanah Merah SG",
+      "source_id": "sindo-current-2026-08-10",
+      "estimated_crossing_mins": 60,
+      "daily_departures": ["08:00", "09:20", "11:30", "13:20"],
+      "weekend_additions": []
+    },
+    {
+      "service_id": "sindo-tm-bct",
+      "operator": "Sindo Ferry",
+      "departure_port": "Tanah Merah SG",
+      "arrival_port": "Batam Centre",
+      "departure_timezone": "Asia/Singapore",
+      "source_id": "sindo-current-2026-08-10",
+      "estimated_crossing_mins": 60,
+      "daily_departures": [
+        "10:20",
+        "12:30",
+        "14:30",
+        "16:30"
+      ],
+      "weekend_additions": [],
+      "calendar_exclusions": {
+        "sunday_only": ["17:40"]
+      }
+    },
+    {
+      "service_id": "majestic-hf-bct",
+      "operator": "Majestic Fast Ferry",
+      "departure_port": "HarbourFront SG",
+      "arrival_port": "Batam Centre",
+      "departure_timezone": "Asia/Singapore",
+      "source_id": "majestic-2026-05-15",
+      "estimated_crossing_mins": 55,
+      "daily_departures": ["08:10", "08:50", "09:50", "10:40", "11:45", "12:20", "13:50", "15:20", "16:20", "17:10", "17:50", "18:50", "20:10", "21:20"],
+      "weekend_additions": []
+    },
+    {
+      "service_id": "majestic-bct-hf",
+      "operator": "Majestic Fast Ferry",
+      "departure_port": "Batam Centre",
+      "arrival_port": "HarbourFront SG",
+      "source_id": "majestic-2026-05-15",
+      "estimated_crossing_mins": 55,
+      "daily_departures": ["06:00", "07:10", "08:20", "09:30", "10:20", "11:30", "12:20", "13:30", "14:30", "15:15", "16:00", "17:30", "18:30", "20:35"],
+      "weekend_additions": []
+    },
+    {
+      "service_id": "majestic-hf-skp",
+      "operator": "Majestic Fast Ferry",
+      "departure_port": "HarbourFront SG",
+      "arrival_port": "Sekupang",
+      "departure_timezone": "Asia/Singapore",
+      "source_id": "majestic-2026-05-15",
+      "estimated_crossing_mins": 50,
+      "daily_departures": ["08:45", "09:45", "12:45", "17:40", "20:40"],
+      "weekend_additions": []
+    },
+    {
+      "service_id": "majestic-tm-bct",
+      "operator": "Majestic Fast Ferry",
+      "departure_port": "Tanah Merah SG",
+      "arrival_port": "Batam Centre",
+      "departure_timezone": "Asia/Singapore",
+      "source_id": "majestic-2026-05-15",
+      "estimated_crossing_mins": 55,
+      "daily_departures": ["08:15", "10:30", "15:15", "18:00", "20:45"],
+      "weekend_additions": ["09:30", "12:40", "16:45", "19:20"],
+      "calendar_exclusions": {
+        "monday_only": ["09:30"]
+      }
+    },
+    {
+      "service_id": "majestic-skp-hf",
+      "operator": "Majestic Fast Ferry",
+      "departure_port": "Sekupang",
+      "arrival_port": "HarbourFront SG",
+      "source_id": "majestic-2026-05-15",
+      "estimated_crossing_mins": 50,
+      "daily_departures": ["06:00", "09:00", "13:10", "16:20", "18:00"],
+      "weekend_additions": []
+    },
+    {
+      "service_id": "majestic-bct-tm",
+      "operator": "Majestic Fast Ferry",
+      "departure_port": "Batam Centre",
+      "arrival_port": "Tanah Merah SG",
+      "source_id": "majestic-2026-05-15",
+      "estimated_crossing_mins": 55,
+      "daily_departures": ["06:15", "08:25", "12:00", "15:30", "18:00"],
+      "weekend_additions": ["09:40", "13:00", "17:00", "19:50"],
+      "calendar_exclusions": {
+        "friday_only": ["19:50"]
+      }
+    },
+    {
+      "service_id": "horizon-hb-hf",
+      "operator": "Horizon Fast Ferry",
+      "departure_port": "HarbourBay",
+      "arrival_port": "HarbourFront SG",
+      "source_id": "horizon-current-2026-08-10",
+      "estimated_crossing_mins": 50,
+      "daily_departures": ["06:00", "07:15", "08:30", "09:45", "10:45", "11:45", "12:45", "14:00", "15:30", "16:30", "17:30", "19:15", "20:30"],
+      "weekend_additions": []
+    },
+    {
+      "service_id": "horizon-hf-hb",
+      "operator": "Horizon Fast Ferry",
+      "departure_port": "HarbourFront SG",
+      "arrival_port": "HarbourBay",
+      "departure_timezone": "Asia/Singapore",
+      "source_id": "horizon-current-2026-08-10",
+      "estimated_crossing_mins": 50,
+      "daily_departures": ["08:15", "09:10", "10:15", "11:15", "12:15", "13:15", "14:15", "15:15", "16:30", "17:45", "19:00", "20:15", "21:35"],
+      "weekend_additions": []
+    }
+  ]
+}
