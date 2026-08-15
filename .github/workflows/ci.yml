@@ -56,6 +56,15 @@ jobs:
         run: python backend/test_backend.py
       - name: Run modular backend unit tests
         run: python -m unittest discover -s backend/tests -p 'test_*.py'
+      # Some modules under backend/tests use bare `def test_*` functions rather
+      # than unittest.TestCase. `unittest discover` imports those modules but
+      # collects nothing from them, so without this step their assertions never
+      # run in CI. pytest is a CI-only tool and deliberately stays out of
+      # backend/requirements.txt, which pins the production runtime.
+      - name: Run function-style backend tests
+        run: |
+          python -m pip install pytest
+          cd backend && python -m pytest tests -q
       - name: Run authentication boundary tests
         run: python -m unittest discover -s backend/auth/tests -t . -p 'test_*.py'
       - name: Validate launcher syntax

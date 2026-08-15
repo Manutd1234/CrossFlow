@@ -3,6 +3,17 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+import sys
+
+# The service modules import each other as ``services.*``, so ``backend/`` must
+# be on sys.path. Every test module in this package does this for itself: with
+# ``discover -s backend/tests`` the directory is the top level, so no package
+# __init__ runs first, and relying on an alphabetically earlier test to have
+# inserted the path makes the suite order-dependent.
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
+
 from services import router
 from services.alt_index import AltIndex
 

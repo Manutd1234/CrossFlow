@@ -268,6 +268,13 @@ def test_vehicle_generalized_cost_changes_path_on_synthetic_graph():
             for source, edges in router.ROAD_ADJ.items()
         }
         router.NODE_META = {}
+        # Swapping the module graph is not enough: the A* heuristic consults an
+        # ALT landmark index cached from the committed graph, and these
+        # synthetic node ids collide with real ones. The stale lower bounds are
+        # then inadmissible for this graph and the search returns a different
+        # path — which is why this test passed alone and failed in the suite,
+        # depending on whether an earlier test had populated the cache.
+        router._main_routing_core.cache_clear()
 
         motorcycle = router.astar_detailed(1, 4, vehicle_type="MOTORCYCLE")
         freight = router.astar_detailed(1, 4, vehicle_type="CARGO_TRUCK")
@@ -305,6 +312,9 @@ def test_vehicle_generalized_cost_changes_path_on_synthetic_graph():
         router.ROAD_ADJ = original_road_adj
         router.ADJ = original_adj
         router.NODE_META = original_meta
+        # Clear again on the way out so the synthetic graph's cached features
+        # cannot leak into whichever test runs next.
+        router._main_routing_core.cache_clear()
 
 
 def test_vehicle_profile_catalog_is_complete_and_auditable():
@@ -498,6 +508,10 @@ def test_route_preferences_diverge_on_synthetic_graph():
             for source, edges in router.ROAD_ADJ.items()
         }
         router.NODE_META = {}
+        # Same reason as the vehicle-cost fixture above: drop the ALT landmark
+        # index and edge features cached from the committed graph before
+        # searching this synthetic one.
+        router._main_routing_core.cache_clear()
 
         shortest = router.astar_detailed(1, 6, route_preference="SHORTEST")
         fastest = router.astar_detailed(1, 6, route_preference="FASTEST")
@@ -564,6 +578,7 @@ def test_route_preferences_diverge_on_synthetic_graph():
         router.ROAD_ADJ = original_road_adj
         router.ADJ = original_adj
         router.NODE_META = original_meta
+        router._main_routing_core.cache_clear()
 
 
 def test_selected_route_preference_is_published_and_cached_separately():
