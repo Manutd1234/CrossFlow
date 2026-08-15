@@ -1,5 +1,15 @@
 """Opt-in routing search counters."""
 
+import sys
+from pathlib import Path
+
+# Required by `unittest discover -s backend/tests`, which makes this directory
+# the top level and so runs neither a package init nor conftest.py. See
+# tests/conftest.py for the full explanation.
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
+
 from services import router
 
 
