@@ -9,7 +9,6 @@ const authMocks = vi.hoisted(() => ({
   fetchSession: vi.fn(),
   signIn: vi.fn(),
   signInAsTestAdmin: vi.fn(),
-  signInWithGitHub: vi.fn(),
   signOut: vi.fn(),
   validSession: vi.fn(),
 }));
@@ -20,7 +19,6 @@ vi.mock('../../services/auth', () => ({
   projectMismatch: () => null,
   signIn: authMocks.signIn,
   signInAsTestAdmin: authMocks.signInAsTestAdmin,
-  signInWithGitHub: authMocks.signInWithGitHub,
   signOut: authMocks.signOut,
   supabaseConfigured: () => true,
   testAdminConfigured: () => true,
