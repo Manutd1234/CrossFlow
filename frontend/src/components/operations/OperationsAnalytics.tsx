@@ -132,6 +132,7 @@ interface OperationsAnalyticsProps {
   operations: OperationsSummary;
   operationsSnapshot: Fetched<OperationsSummary> | null;
   corridors: Corridor[];
+  ferryAndPortsContent?: React.ReactNode;
 }
 
 /** Modelled congestion index with no departure management, for comparison. */
@@ -165,12 +166,13 @@ const FALLBACK_PRESSURE_INDEX = [
   { hour: '20:00', baseline_index: 48, managed_index: 24 },
 ];
 
-type OperationsWorkspaceTab = 'overview' | 'trends' | 'alerts' | 'history' | 'model';
+type OperationsWorkspaceTab = 'overview' | 'ferry-ports' | 'trends' | 'alerts' | 'history' | 'model';
 
 export const OperationsAnalytics: React.FC<OperationsAnalyticsProps> = ({
   operations,
   operationsSnapshot,
   corridors,
+  ferryAndPortsContent,
 }) => {
   // Acknowledged alerts. Ids are stable across polls, so a dismissal sticks.
   const [acknowledged, setAcknowledged] = useState<Set<string>>(new Set());
@@ -242,11 +244,6 @@ export const OperationsAnalytics: React.FC<OperationsAnalyticsProps> = ({
     : hasApiOperations
       ? 'PLANNING MODEL API CONNECTED'
       : 'LOCAL PLANNING CONTINUITY';
-  const operationsSourceBadgeLines = !operationsSnapshot
-    ? ['LOADING', 'OPERATIONS']
-    : hasApiOperations
-      ? ['PLANNING MODEL', 'API CONNECTED']
-      : ['LOCAL PLANNING', 'CONTINUITY'];
   const avoidableEmissionsOpportunity = operations
     .modeled_avoidable_emissions_opportunity_kg_today
     ?? operations.total_co2_reduced_today_kg;
@@ -294,26 +291,10 @@ export const OperationsAnalytics: React.FC<OperationsAnalyticsProps> = ({
         ariaLabel="Operations analytics sections"
         className="operations-tabs"
         idPrefix="operations-workspace"
-        railAccessory={(
-          <span
-            className={`operations-tabs__planning-badge ${hasApiOperations ? 'is-connected' : 'is-continuity'}`}
-            aria-label={`Operations planning data source: ${operationsSourceLabel}`}
-            title={hasApiOperations
-              ? 'The planning API responded successfully. Its outputs remain modelled and are not observed or measured.'
-              : 'The planning API is not connected; local planning continuity is being shown.'}
-          >
-            {hasApiOperations ? <Check aria-hidden="true" size={ICON_SIZE.medium} /> : null}
-            <span className="operations-tabs__planning-copy" aria-hidden="true">
-              <span>{operationsSourceBadgeLines[0]}</span>
-              <span>{operationsSourceBadgeLines[1]}</span>
-            </span>
-          </span>
-        )}
         tabs={[
           {
             id: 'overview',
             label: 'Overview',
-            description: 'Official evidence & KPIs',
             content: activeWorkspaceTab === 'overview' ? (
               <div className="operations-section-stack">
       <section className="ui-card-shadow-hover official-evidence-panel" aria-labelledby="official-evidence-title">
@@ -405,9 +386,13 @@ export const OperationsAnalytics: React.FC<OperationsAnalyticsProps> = ({
             ) : null,
           },
           {
+            id: 'ferry-ports',
+            label: 'Ports',
+            content: activeWorkspaceTab === 'ferry-ports' ? ferryAndPortsContent : null,
+          },
+          {
             id: 'trends',
             label: 'Trends',
-            description: 'Four planning charts',
             content: activeWorkspaceTab === 'trends' ? (
               <div className="operations-section-stack">
 
@@ -574,7 +559,6 @@ export const OperationsAnalytics: React.FC<OperationsAnalyticsProps> = ({
           {
             id: 'alerts',
             label: 'Alerts',
-            description: `${activeAlerts.length} planning alerts`,
             content: activeWorkspaceTab === 'alerts' ? (
       <section className="glass-panel operations-alerts" aria-labelledby="operator-alerts-title">
         <h3 id="operator-alerts-title" className="operations-alerts__title">
@@ -633,7 +617,6 @@ export const OperationsAnalytics: React.FC<OperationsAnalyticsProps> = ({
           {
             id: 'history',
             label: 'History',
-            description: 'Congestion patterns',
             content: activeWorkspaceTab === 'history' || historyVisited
               ? corridors.length > 0
                 ? (
@@ -651,7 +634,6 @@ export const OperationsAnalytics: React.FC<OperationsAnalyticsProps> = ({
           {
             id: 'model',
             label: 'Model',
-            description: 'Forecast provenance',
             content: activeWorkspaceTab === 'model' || modelVisited ? <AIModelPanel /> : null,
           },
         ]}

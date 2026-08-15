@@ -216,7 +216,7 @@ describe('selectable road alternatives', () => {
       'Summary',
       'Journey map',
       'Directions',
-      'Connections',
+      'Comparison',
     ]);
     expect(summaryTab.getAttribute('aria-selected')).toBe('true');
     expect(container.querySelector('[data-testid="route-map-stub"]')).toBeNull();
@@ -572,10 +572,16 @@ describe('selectable road alternatives', () => {
       destination_lat: result.requested_destination?.lat,
     });
 
-    const easyPreference = Array.from(
-      container.querySelectorAll<HTMLButtonElement>('.route-preference-option'),
-    ).find(button => button.textContent?.includes('Easy'));
-    act(() => easyPreference?.click());
+    // A benchmark computed for one set of inputs must not stay on screen once
+    // those inputs change; a stale comparison read as current would be worse
+    // than none. The redesigned panel no longer exposes a route-preference
+    // control, so this drives the same invalidation through the swap action.
+    const swapButton = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Swap origin and destination"]',
+    ) ?? Array.from(container.querySelectorAll<HTMLButtonElement>('button'))
+      .find(button => /swap/i.test(button.getAttribute('aria-label') ?? ''));
+    expect(swapButton).toBeTruthy();
+    act(() => swapButton?.click());
     expect(container.querySelector('#route-online-benchmark')).toBeNull();
   });
 });

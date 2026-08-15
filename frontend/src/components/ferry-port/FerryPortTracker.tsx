@@ -312,7 +312,7 @@ export const FerryPortTracker: React.FC<FerryPortTrackerProps> = ({
                 onClick={() => setSelectedPort(port)}
                 className="ui-button-choice ui-sand-interactive"
               >
-                {port === 'ALL' ? 'All terminals' : port}
+                {port === 'ALL' ? 'All' : port}
               </button>
             ))}
           </div>
@@ -349,7 +349,6 @@ export const FerryPortTracker: React.FC<FerryPortTrackerProps> = ({
           {
             id: 'terminals',
             label: 'Terminals',
-            description: 'Queues, processing and berths',
             content: (
       <section className="terminal-status" aria-label="Terminal access and processing outlook" aria-busy={portsLoading}>
         {portsLoading && ports.length === 0 ? (
@@ -470,7 +469,6 @@ export const FerryPortTracker: React.FC<FerryPortTrackerProps> = ({
           {
             id: 'departures',
             label: 'Departures',
-            description: 'Published cross-strait sailings',
             content: (
         <section className="glass-panel ferry-departures" aria-labelledby="sailings-title">
           <div className="ferry-departures__header">
@@ -538,7 +536,6 @@ export const FerryPortTracker: React.FC<FerryPortTrackerProps> = ({
           {
             id: 'cargo',
             label: 'Cargo',
-            description: 'Demo logistics visibility',
             content: (
         <section className="glass-panel cargo-monitor" aria-labelledby="cargo-title">
           <div className="cargo-monitor__header">

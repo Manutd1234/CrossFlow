@@ -7,17 +7,17 @@ import type {
   RouteLocation,
   RouteOptimizationResult,
   RoutePreference,
-  RouteScheduleOptions,
   VehicleType,
 } from '../../types';
 import {
   ApiRequestError,
   googleRouteBenchmarkEnabled,
   requestFreeRouteOptimization,
+  requestMultiStopRouteOptimization,
   requestRouteBenchmark,
   requestRouteOptimization,
 } from '../../services/api';
-import { Anchor, ArrowDownUp, Bike, BusFront, Car, ChevronDown, CircleCheck, CircleDot, CircleSmall, Clock, CloudRain, CloudSun, Coffee, CornerUpLeft, CornerUpRight, Flag, Fuel, Globe, Info, Leaf, Lightbulb, LoaderCircle, MapPin, MoveUp, Navigation, Package, Redo, RotateCw, Route, ShieldCheck, Ship, Sparkles, TriangleAlert, Truck, Users, Zap, type LucideIcon } from 'lucide-react';
+import { Anchor, ArrowDownUp, Bike, BusFront, Car, ChevronDown, CircleCheck, CircleDot, CircleSmall, Clock, CloudRain, CloudSun, Coffee, CornerUpLeft, CornerUpRight, Flag, Fuel, Globe, Info, Leaf, Lightbulb, LoaderCircle, MapPin, MoveUp, Navigation, Package, Plus, Redo, RotateCw, Route, ShieldCheck, Ship, Sparkles, TriangleAlert, Truck, Users, X, Zap, type LucideIcon } from 'lucide-react';
 import { ICON_SIZE } from '../../theme/iconSizes';
 
 import {
@@ -33,10 +33,7 @@ import {
   vehicleProfile,
   type VehicleIconKey,
 } from '../../data/vehicleCatalog';
-import {
-  ROUTE_PREFERENCE_OPTIONS,
-  isRoutePreferenceAvailable,
-} from '../../data/routePreferences';
+import { isRoutePreferenceAvailable } from '../../data/routePreferences';
 
 
 interface RouteOptimizerProps {
@@ -65,6 +62,22 @@ const WEATHER_OPTIONS = [
   { id: 2, label: 'Heavy storm', icon: TriangleAlert },
 ] as const;
 
+function twelveHourValue(hour: number): number {
+  return hour % 12 || 12;
+}
+
+function twentyFourHourValue(hour: number, period: 'AM' | 'PM'): number {
+  return (hour % 12) + (period === 'PM' ? 12 : 0);
+}
+
+function nextSelectedTimeIso(hour: number, minute: number): string {
+  const now = new Date();
+  const selected = new Date(now);
+  selected.setHours(hour, minute, 0, 0);
+  if (selected.getTime() < now.getTime()) selected.setDate(selected.getDate() + 1);
+  return selected.toISOString();
+}
+
 const VEHICLE_ICONS: Record<VehicleIconKey, LucideIcon> = {
   car: Car,
   electric: Zap,
@@ -73,13 +86,6 @@ const VEHICLE_ICONS: Record<VehicleIconKey, LucideIcon> = {
   minibus: Users,
   bus: BusFront,
   truck: Truck,
-};
-const ROUTE_PREFERENCE_ICONS: Record<RoutePreference, LucideIcon> = {
-  BALANCED: Sparkles,
-  FASTEST: Zap,
-  SHORTEST: Route,
-  EASY: ShieldCheck,
-  LOCAL: MapPin,
 };
 const VEHICLE_GROUPS = ['Passenger', 'Delivery', 'Public transport', 'Freight'] as const;
 const VEHICLE_OPTIONS_BY_GROUP = VEHICLE_GROUPS.map((group) => ({
@@ -158,15 +164,6 @@ function formatManeuverDistance(distanceM: number): string {
   return `${(distanceM / 1000).toFixed(1)} km`;
 }
 
-/** Datetime-local is intentionally treated as Batam wall time, independent of
- * the browser's own timezone. The route API requires an explicit offset. */
-function scheduledInputToIso(value: string): string | undefined {
-  const trimmed = value.trim();
-  if (!trimmed) return undefined;
-  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(trimmed)) return undefined;
-  return `${trimmed}:00+07:00`;
-}
-
 export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
   locations, originId, setOriginId, destinationId, setDestinationId,
   result, setResult, resultSource, setResultSource,
@@ -179,10 +176,12 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
   const [routeBenchmark, setRouteBenchmark] = useState<RouteBenchmarkResult | null>(null);
   const [benchmarkError, setBenchmarkError] = useState<string | null>(null);
   const [benchmarkLoading, setBenchmarkLoading] = useState(false);
-  const [scheduleMode, setScheduleMode] = useState<'departure' | 'arrive_by'>('departure');
-  const [scheduleAt, setScheduleAt] = useState('');
   const [activeResultTab, setActiveResultTab] = useState<RouteResultTab>('summary');
   const [vehicleMenuOpen, setVehicleMenuOpen] = useState(false);
+  const [timeMode, setTimeMode] = useState<'departure' | 'arrival'>('departure');
+  const [departureMinute, setDepartureMinute] = useState(() => new Date().getMinutes());
+  const [arrivalHour, setArrivalHour] = useState(() => (new Date().getHours() + 1) % 24);
+  const [arrivalMinute, setArrivalMinute] = useState(() => new Date().getMinutes());
   const optimizationRequestRef = useRef(0);
   const benchmarkRequestRef = useRef(0);
   const vehicleSelectorRef = useRef<HTMLDivElement>(null);
@@ -191,10 +190,6 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
   const vehicleOptionRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const selectedVehicleProfile = vehicleProfile(vehicleType);
   const SelectedVehicleIcon = VEHICLE_ICONS[selectedVehicleProfile.icon];
-  const selectedRoutePreference = ROUTE_PREFERENCE_OPTIONS.find(
-    (preference) => preference.id === routePreference,
-  ) ?? ROUTE_PREFERENCE_OPTIONS[0];
-  const localRouteAvailable = isRoutePreferenceAvailable('LOCAL', vehicleType);
 
   useEffect(() => {
     if (!vehicleMenuOpen) return;
@@ -230,7 +225,8 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
   const [mode, setMode] = useState<'named' | 'free'>(
     result ? (resultIsFreeRoute ? 'free' : 'named') : 'free',
   );
-  const [pickerTarget, setPickerTarget] = useState<'origin' | 'dest' | null>(null);
+  const [pickerTarget, setPickerTarget] = useState<'origin' | 'dest' | number | null>(null);
+  const [waypoints, setWaypoints] = useState<Array<FreeLocation | null>>([]);
 
   // Named-mode derived state (unchanged from before)
   const originNamed = locations.find(l => l.id === originId) || locations[0];
@@ -267,7 +263,8 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
   const canOptimizeEndpoints = isNamedMode
     ? !sameLocationNamed
     : canOptimizeFree;
-  const canOptimize = canOptimizeEndpoints && preferenceAvailable;
+  const canOptimize = canOptimizeEndpoints && preferenceAvailable
+    && waypoints.every((waypoint) => waypoint !== null);
 
   const clearRouteBenchmark = useCallback(() => {
     benchmarkRequestRef.current += 1;
@@ -297,6 +294,12 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
       setFreeOrigin(freeDest);
       setFreeDest(tmp);
     }
+    setWaypoints((current) => [...current].reverse());
+    invalidateResult();
+  };
+
+  const addWaypoint = () => {
+    setWaypoints((current) => [...current, null]);
     invalidateResult();
   };
 
@@ -308,17 +311,31 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
     setSelectedRouteId(PRIMARY_ROUTE_ID);
     setLoading(true);
     setRouteError(null);
-    const scheduledIso = scheduledInputToIso(scheduleAt);
-    const schedule: RouteScheduleOptions | undefined = scheduledIso
-      ? scheduleMode === 'departure'
-        ? { departure_at: scheduledIso }
-        : { arrive_by: scheduledIso }
-      : undefined;
     try {
+      const selectedRequestHour = timeMode === 'departure'
+        ? hour
+        : Math.floor((arrivalHour * 60 + arrivalMinute - (result?.total_eta_mins ?? 60) + 1440) % 1440 / 60);
       let res;
       let requestedOrigin: FreeLocation;
       let requestedDestination: FreeLocation;
-      if (isNamedMode) {
+      if (waypoints.length > 0) {
+        if ((!isNamedMode && (!freeOrigin || !freeDest)) || waypoints.some((point) => !point)) return;
+        requestedOrigin = isNamedMode
+          ? { lat: originNamed.lat, lng: originNamed.lng, display_name: originNamed.name }
+          : freeOrigin!;
+        requestedDestination = isNamedMode
+          ? { lat: destNamed.lat, lng: destNamed.lng, display_name: destNamed.name }
+          : freeDest!;
+        res = await requestMultiStopRouteOptimization(
+          [requestedOrigin, ...waypoints.filter((point): point is FreeLocation => point !== null), requestedDestination],
+          vehicleType,
+          timeMode === 'departure'
+            ? { departureAt: nextSelectedTimeIso(hour, departureMinute) }
+            : { arriveBy: nextSelectedTimeIso(arrivalHour, arrivalMinute) },
+          weather,
+          routePreference,
+        );
+      } else if (isNamedMode) {
         requestedOrigin = {
           lat: originNamed.lat,
           lng: originNamed.lng,
@@ -333,10 +350,9 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
           originId,
           destinationId,
           vehicleType,
-          hour,
+          selectedRequestHour,
           weather,
           routePreference,
-          schedule,
         );
       } else {
         if (!freeOrigin || !freeDest) return;
@@ -346,10 +362,9 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
           freeOrigin,
           freeDest,
           vehicleType,
-          hour,
+          selectedRequestHour,
           weather,
           routePreference,
-          schedule,
         );
       }
       if (requestId !== optimizationRequestRef.current) return;
@@ -514,9 +529,17 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
           <legend className="route-planner-fieldset-legend">Route</legend>
           <div className="route-location-picker">
             <div className="route-endpoint-rail" aria-hidden="true">
-              <CircleSmall className="route-endpoint-icon route-endpoint-icon-origin" size={ICON_SIZE.medium} />
-              <span className="route-endpoint-connector" />
-              <MapPin className="route-endpoint-icon route-endpoint-icon-destination" size={ICON_SIZE.medium} />
+              <span className="route-endpoint-marker-row">
+                <CircleSmall className="route-endpoint-icon route-endpoint-icon-origin" size={ICON_SIZE.medium} />
+              </span>
+              {waypoints.map((_, index) => (
+                <span className="route-endpoint-marker-row" key={`waypoint-marker-${index}`}>
+                  <CircleSmall className="route-endpoint-icon route-endpoint-icon-waypoint" size={ICON_SIZE.medium} />
+                </span>
+              ))}
+              <span className="route-endpoint-marker-row">
+                <MapPin className="route-endpoint-icon route-endpoint-icon-destination" size={ICON_SIZE.medium} />
+              </span>
             </div>
 
             <div className="route-endpoint-fields">
@@ -557,6 +580,39 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
                 />
               )}
 
+              {waypoints.map((waypoint, index) => (
+                <div className="route-waypoint-row" key={`waypoint-${index}`}>
+                  <LocationSearch
+                    id={`route-waypoint-${index}`}
+                    label={`Stop ${index + 1}`}
+                    value={waypoint}
+                    onChange={(location) => {
+                      setWaypoints((current) => current.map((item, itemIndex) => (
+                        itemIndex === index ? location : item
+                      )));
+                      invalidateResult();
+                    }}
+                    onNamedLocationSelect={isNamedMode ? (location) => {
+                      setWaypoints((current) => current.map((item, itemIndex) => (
+                        itemIndex === index
+                          ? { lat: location.lat, lng: location.lng, display_name: location.name }
+                          : item
+                      )));
+                      invalidateResult();
+                    } : undefined}
+                    namedLocations={locations}
+                    markerColor="cyan"
+                    showMapPickerButton={false}
+                    showSearchButton={false}
+                    showHelpText={false}
+                    compactLayout
+                    savedPlacesOnly={isNamedMode}
+                    placeholder="Add an intermediate stop"
+                    onOpenMapPicker={() => setPickerTarget(index)}
+                  />
+                </div>
+              ))}
+
               {isNamedMode ? (
                 <LocationSearch
                   id="route-destination-named"
@@ -595,15 +651,40 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
               )}
             </div>
 
-            <button
-              type="button"
-              className="route-swap-button"
-              onClick={swapLocations}
-              aria-label="Swap origin and destination"
-              title="Swap origin and destination"
-            >
-              <ArrowDownUp size={ICON_SIZE.large} aria-hidden="true" />
-            </button>
+            <div className="route-endpoint-actions">
+              <button
+                type="button"
+                className="route-swap-button"
+                onClick={swapLocations}
+                aria-label="Swap origin and destination"
+                title="Swap origin and destination"
+              >
+                <ArrowDownUp size={ICON_SIZE.large} aria-hidden="true" />
+              </button>
+              {waypoints.map((_, index) => (
+                <button
+                  type="button"
+                  className="route-waypoint-remove"
+                  key={`remove-waypoint-${index}`}
+                  aria-label={`Remove stop ${index + 1}`}
+                  onClick={() => {
+                    setWaypoints((current) => current.filter((__, itemIndex) => itemIndex !== index));
+                    invalidateResult();
+                  }}
+                >
+                  <X size={ICON_SIZE.large} aria-hidden="true" />
+                </button>
+              ))}
+              <button
+                type="button"
+                className="route-add-stop-button"
+                onClick={addWaypoint}
+                aria-label="Add an intermediate stop"
+                title="Add an intermediate stop"
+              >
+                <Plus size={ICON_SIZE.large} aria-hidden="true" />
+              </button>
+            </div>
 
             {(isNamedMode ? sameLocationNamed : sameLocationFree) && (
               <p id="route-endpoint-validation" className="route-validation" role="alert" >
@@ -718,62 +799,6 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
         </fieldset>
 
 
-        <fieldset className="route-preference-fieldset">
-          <legend className="route-planner-fieldset-legend">Route preference</legend>
-          <div className="route-preference-grid">
-            {ROUTE_PREFERENCE_OPTIONS.map((preference) => {
-              const PreferenceIcon = ROUTE_PREFERENCE_ICONS[preference.id];
-              const isSelected = routePreference === preference.id;
-              const isAvailable = isRoutePreferenceAvailable(
-                preference.id,
-                vehicleType,
-              );
-              const unavailableDescriptionId = preference.id === 'LOCAL' && !isAvailable
-                ? 'route-preference-local-unavailable'
-                : undefined;
-              return (
-                <button
-                  key={preference.id}
-                  type="button"
-                  className="ui-button-choice ui-sand-interactive route-preference-option"
-                  aria-pressed={isSelected}
-                  aria-label={`${preference.name}. ${preference.description}`}
-                  aria-describedby={unavailableDescriptionId}
-                  disabled={!isAvailable}
-                  onClick={() => {
-                    if (isSelected || !isAvailable) return;
-                    setRoutePreference(preference.id);
-                    invalidateResult();
-                  }}
-                >
-                  <span className="route-choice-option-heading">
-                    <PreferenceIcon size={ICON_SIZE.medium} aria-hidden="true" />
-                    <strong className="route-choice-option-label">{preference.name}</strong>
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-          <p
-            id="route-preference-selected-description"
-            className="route-preference-selected-description"
-            role="status"
-            aria-live="polite"
-          >
-            {selectedRoutePreference.description}
-          </p>
-          {!localRouteAvailable ? (
-            <p
-              id="route-preference-local-unavailable"
-              className="route-preference-unavailable-note"
-            >
-              <TriangleAlert size={ICON_SIZE.medium} aria-hidden="true" />
-              Local shortcuts unavailable: {selectedVehicleProfile.label} is too large for unverified narrow-road clearance.
-            </p>
-          ) : null}
-        </fieldset>
-
-
         <fieldset className="route-planner-fieldset">
           <legend className="route-planner-fieldset-legend">
             Weather & Time
@@ -803,59 +828,121 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
           </div>
         </fieldset>
 
-        <div className="route-departure-time-control">
-          <div className="route-schedule-mode-row">
-            <label htmlFor="route-schedule-mode" className="route-departure-time-label">Schedule by</label>
-            <select
-              id="route-schedule-mode"
-              className="route-schedule-mode-select"
-              value={scheduleMode}
-              onChange={(event) => {
-                setScheduleMode(event.target.value as 'departure' | 'arrive_by');
-                invalidateResult();
-              }}
-            >
-              <option value="departure">Depart at</option>
-              <option value="arrive_by">Arrive by</option>
-            </select>
-          </div>
-          <label htmlFor="route-schedule-at" className="route-schedule-at-label">
-            {scheduleMode === 'departure' ? 'Optional departure date and time' : 'Optional arrival deadline'}
-          </label>
-          <input
-            id="route-schedule-at"
-            type="datetime-local"
-            value={scheduleAt}
-            onChange={(event) => {
-              setScheduleAt(event.target.value);
+        <div className="route-time-card-grid" role="radiogroup" aria-label="Journey time preference">
+          {([
+            { id: 'departure' as const, label: 'Departure time', selectedHour: hour, selectedMinute: departureMinute },
+            { id: 'arrival' as const, label: 'Arrival time', selectedHour: arrivalHour, selectedMinute: arrivalMinute },
+          ]).map((option) => {
+            const selected = timeMode === option.id;
+            const selectMode = () => {
+              setTimeMode(option.id);
               invalidateResult();
-            }}
-            className="route-schedule-at-input"
-            aria-describedby="route-schedule-timezone"
-          />
-          <p id="route-schedule-timezone" className="route-schedule-timezone">
-            Batam local time (UTC+07:00). Leave blank to use the hour below.
-          </p>
-          <div className="route-departure-time-header">
-            <label htmlFor="route-departure-hour" className="route-departure-time-label">Fallback departure hour</label>
-            <output htmlFor="route-departure-hour" className="route-departure-time-value">{String(hour).padStart(2, '0')}:00</output>
-          </div>
-          <input
-            id="route-departure-hour"
-            type="range"
-            min="0"
-            max="23"
-            value={hour}
-            onChange={(e) => {
-              setHour(Number(e.target.value));
+            };
+            const setHourValue = (value: number) => {
+              if (!Number.isInteger(value) || value < 1 || value > 12) return;
+              const period = option.selectedHour >= 12 ? 'PM' : 'AM';
+              const next = twentyFourHourValue(value, period);
+              if (option.id === 'departure') setHour(next);
+              else setArrivalHour(next);
               invalidateResult();
-            }}
-            aria-label={`Departure hour: ${String(hour).padStart(2, '0')}:00`}
-            className="route-departure-time-slider"
-          />
-          <div aria-hidden="true" className="route-departure-time-ticks">
-            <span>00:00</span><span>12:00</span><span>23:00</span>
-          </div>
+            };
+            const setMinuteValue = (value: number) => {
+              if (!Number.isInteger(value) || value < 0 || value > 59) return;
+              if (option.id === 'departure') setDepartureMinute(value);
+              else setArrivalMinute(value);
+              invalidateResult();
+            };
+            return (
+              <div
+                key={option.id}
+                className="ui-sand-interactive route-time-card"
+                data-selected={selected}
+                role="radio"
+                aria-checked={selected}
+                tabIndex={0}
+                onClick={selectMode}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    selectMode();
+                  }
+                }}
+              >
+                <span className="route-time-card-label">{option.label}</span>
+                <div className="route-time-selectors">
+                  <label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="12"
+                      step="1"
+                      inputMode="numeric"
+                      value={twelveHourValue(option.selectedHour)}
+                      aria-label={`${option.label} hour`}
+                      onChange={(event) => {
+                        selectMode();
+                        setHourValue(Number(event.target.value));
+                      }}
+                      onPointerDown={(event) => { delete event.currentTarget.dataset.keyboardFocus; }}
+                      onKeyDown={(event) => { event.currentTarget.dataset.keyboardFocus = 'true'; }}
+                      onBlur={(event) => { delete event.currentTarget.dataset.keyboardFocus; }}
+                      onWheel={(event) => {
+                        if (document.activeElement !== event.currentTarget) return;
+                        event.preventDefault();
+                        const current = twelveHourValue(option.selectedHour);
+                        setHourValue(event.deltaY < 0 ? (current % 12) + 1 : ((current + 10) % 12) + 1);
+                      }}
+                    />
+                  </label>
+                  <span className="route-time-unit" aria-hidden="true">:</span>
+                  <label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="59"
+                      step="1"
+                      inputMode="numeric"
+                      value={String(option.selectedMinute).padStart(2, '0')}
+                      aria-label={`${option.label} minute`}
+                      onChange={(event) => {
+                        selectMode();
+                        setMinuteValue(Number(event.target.value));
+                      }}
+                      onPointerDown={(event) => { delete event.currentTarget.dataset.keyboardFocus; }}
+                      onKeyDown={(event) => { event.currentTarget.dataset.keyboardFocus = 'true'; }}
+                      onBlur={(event) => { delete event.currentTarget.dataset.keyboardFocus; }}
+                      onWheel={(event) => {
+                        if (document.activeElement !== event.currentTarget) return;
+                        event.preventDefault();
+                        const current = option.selectedMinute;
+                        setMinuteValue(event.deltaY < 0 ? (current + 1) % 60 : (current + 59) % 60);
+                      }}
+                    />
+                  </label>
+                  <div className="route-time-period-selector" role="group" aria-label={`${option.label} AM or PM`}>
+                    {(['AM', 'PM'] as const).map((period) => {
+                      const periodSelected = (option.selectedHour >= 12 ? 'PM' : 'AM') === period;
+                      return (
+                        <button
+                          type="button"
+                          key={period}
+                          aria-pressed={periodSelected}
+                          onClick={() => {
+                            selectMode();
+                            const value = twentyFourHourValue(twelveHourValue(option.selectedHour), period);
+                            if (option.id === 'departure') setHour(value);
+                            else setArrivalHour(value);
+                          }}
+                        >
+                          {period}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
         </div>
         </div>
 
@@ -918,17 +1005,11 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
           <>
             <header className="route-result-header">
               <div className="route-result-title-group">
-                <span className="route-ready-status">
-                  <CircleCheck size={ICON_SIZE.medium} aria-hidden="true" /> Route ready
-                </span>
+                <div className="route-result-title-row">
                 <h2 className="route-result-title">
                   {resultOriginName} <span aria-hidden="true" className="route-result-direction-arrow">→</span> {resultDestinationName}
                 </h2>
-                {result.route_id ? (
-                  <span className="route-result-route-id" title={result.route_id}>
-                    Route code <code>{result.route_code ?? result.route_id.slice(0, 7)}</code>
-                  </span>
-                ) : null}
+                </div>
               </div>
               <div className="route-result-actions">
                 {googleRouteBenchmarkEnabled() && resultOrigin && resultDestination ? (
@@ -996,6 +1077,16 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
                 </div>
               ) : null}
             </section>
+
+            {result.route_code ? (
+              <section className="route-code-card" aria-labelledby="route-code-card-heading">
+                <div>
+                  <span className="route-code-card-eyebrow">Driver route ID</span>
+                  <h3 id="route-code-card-heading">Use this seven-character ID to retrieve the journey</h3>
+                </div>
+                <strong aria-label={`Route ID ${result.route_code}`}>{result.route_code}</strong>
+              </section>
+            ) : null}
 
             <dl className="route-metrics-grid" aria-label="Route summary metrics" >
               {[
@@ -1394,7 +1485,7 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
                 },
                 {
                   id: 'connections',
-                  label: 'Connections',
+                  label: 'Comparison',
                   content: (
                     <div className="route-result-tab-content">
             {/* All-Vehicle Mode Comparison Grid */}
@@ -1474,7 +1565,7 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
             )}
 
 
-            <section aria-labelledby="connected-ferries-heading">
+            <section aria-labelledby="connected-ferries-heading" hidden>
               <h3 id="connected-ferries-heading" className="route-ferry-connections-heading">
                 <Anchor size={ICON_SIZE.medium} aria-hidden="true" color="var(--accent-cyan)" /> {isMultimodal ? 'Ferry schedule evidence' : 'Published ferry connections after arrival'}
               </h3>
@@ -1550,15 +1641,19 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
       <WorldMapPickerModal
         isOpen={pickerTarget !== null}
         onClose={closePicker}
-        title={pickerTarget === 'origin' ? 'Select origin in Singapore or Batam' : 'Select destination in Singapore or Batam'}
-        initialLat={pickerTarget === 'origin' ? (freeOrigin?.lat ?? 1.12) : (freeDest?.lat ?? 1.12)}
-        initialLng={pickerTarget === 'origin' ? (freeOrigin?.lng ?? 104.02) : (freeDest?.lng ?? 104.02)}
-        initialName={pickerTarget === 'origin' ? freeOrigin?.display_name : freeDest?.display_name}
+        title={pickerTarget === 'origin' ? 'Select origin in Singapore or Batam' : pickerTarget === 'dest' ? 'Select destination in Singapore or Batam' : 'Select intermediate stop'}
+        initialLat={pickerTarget === 'origin' ? (freeOrigin?.lat ?? 1.12) : pickerTarget === 'dest' ? (freeDest?.lat ?? 1.12) : (typeof pickerTarget === 'number' ? waypoints[pickerTarget]?.lat : undefined) ?? 1.12}
+        initialLng={pickerTarget === 'origin' ? (freeOrigin?.lng ?? 104.02) : pickerTarget === 'dest' ? (freeDest?.lng ?? 104.02) : (typeof pickerTarget === 'number' ? waypoints[pickerTarget]?.lng : undefined) ?? 104.02}
+        initialName={pickerTarget === 'origin' ? freeOrigin?.display_name : pickerTarget === 'dest' ? freeDest?.display_name : typeof pickerTarget === 'number' ? waypoints[pickerTarget]?.display_name : undefined}
         onSelectLocation={(loc) => {
           if (pickerTarget === 'origin') {
             setFreeOrigin(loc);
-          } else {
+          } else if (pickerTarget === 'dest') {
             setFreeDest(loc);
+          } else if (typeof pickerTarget === 'number') {
+            setWaypoints((current) => current.map((item, index) => (
+              index === pickerTarget ? loc : item
+            )));
           }
           setPickerTarget(null);
           invalidateResult();

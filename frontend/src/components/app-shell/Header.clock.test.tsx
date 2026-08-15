@@ -30,7 +30,6 @@ describe('header Batam clock', () => {
         onOpenSignIn={vi.fn()}
         identity={null}
         signInAvailable={false}
-        onOpenPitch={vi.fn()}
         activeTab="map"
         setActiveTab={vi.fn()}
         dataSource="simulated"
@@ -38,10 +37,11 @@ describe('header Batam clock', () => {
       />,
     ));
     const clock = container.querySelector<HTMLTimeElement>(
-      '[aria-label="Telemetry status and Batam clock"] time',
+      '[aria-label="Telemetry status and clock"] time',
     );
 
-    expect(container.textContent).toContain('Batam time 14:30:00 WIB');
+    expect(container.textContent).toContain('Model Estimate14:30:00 WIB');
+    expect(container.textContent).not.toContain('Batam time');
     act(() => vi.advanceTimersByTime(2_000));
     expect(clock?.textContent).toBe('14:30:02');
     expect(clock?.dateTime).toBe('2026-08-09T14:30:02.000+07:00');

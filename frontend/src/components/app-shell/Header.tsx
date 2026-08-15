@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { LogIn, Presentation, ShieldCheck } from 'lucide-react';
+import { LogIn, ShieldCheck } from 'lucide-react';
 import { ICON_SIZE } from '../../theme/iconSizes';
 import type { AuthSession, DataSource, Provenance } from '../../types';
 import { toBatamIso } from '../../utils/batamTime';
@@ -7,7 +7,6 @@ import { formatClock } from '../../utils/format';
 import { Navigation, type AppTab } from './Navigation';
 
 interface HeaderProps {
-  onOpenPitch: () => void;
   onOpenSignIn: () => void;
   identity: AuthSession | null;
   signInAvailable: boolean;
@@ -20,17 +19,17 @@ interface HeaderProps {
 
 const STATUS = {
   live: {
-    label: 'Live road traffic',
+    label: 'Live',
     className: 'app-data-status-live',
     fallback: 'The current road traffic provider is connected.',
   },
   simulated: {
-    label: 'Current model feed',
+    label: 'Model Estimate',
     className: 'app-data-status-simulated',
     fallback: 'Current conditions are estimated by the Batam traffic model.',
   },
   offline: {
-    label: 'Local continuity',
+    label: 'Local Estimate',
     className: 'app-data-status-offline',
     fallback: 'The API is reconnecting; current-time local estimates remain available.',
   },
@@ -53,7 +52,6 @@ function RollingBatamClock({ anchor }: { anchor: string }) {
 }
 
 export function Header({
-  onOpenPitch,
   onOpenSignIn,
   identity,
   signInAvailable,
@@ -76,8 +74,7 @@ export function Header({
       <div className="app-header-inner">
         <div className="app-brand">
           <div className="app-brand-copy">
-            <h1 className="app-brand-name">CrossFlow <span>AI</span></h1>
-            <span className="app-brand-tagline">Batam · Singapore mobility</span>
+            <h1 className="app-brand-name">Cross<span>Flow</span></h1>
           </div>
         </div>
 
@@ -104,7 +101,7 @@ export function Header({
             className={`app-data-status ${status.className}`}
             role="group"
             title={statusDescription}
-            aria-label="Telemetry status and Batam clock"
+            aria-label="Telemetry status and clock"
           >
             <span className="app-data-status-dot" aria-hidden="true" />
             <span className="app-data-status-copy">
@@ -113,7 +110,7 @@ export function Header({
               </strong>
               <span>
                 {lastUpdated ? (
-                  <>Batam time <RollingBatamClock key={lastUpdated} anchor={lastUpdated} /> WIB</>
+                  <><RollingBatamClock key={lastUpdated} anchor={lastUpdated} /> WIB</>
                 ) : 'Waiting for sync'}
               </span>
             </span>
@@ -145,17 +142,6 @@ export function Header({
               )}
             </button>
           ) : null}
-
-          <button
-            type="button"
-            className="ui-button-primary app-pitch-button"
-            onClick={onOpenPitch}
-            aria-haspopup="dialog"
-            aria-label="Open the CrossFlow solution pitch deck"
-            title="Present solution"
-          >
-            <Presentation size={ICON_SIZE.large} aria-hidden="true" />
-          </button>
         </div>
       </div>
     </header>
