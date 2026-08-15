@@ -1,22 +1,80 @@
 :root {
-  font-family: Inter, system-ui, sans-serif;
-  color: #111827;
-  background: #ffffff;
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
+  color-scheme: light;
+
+  --sand: #f3ead8;
+  --sand-soft: #fbf7ee;
+  --warm-card: #fffdf8;
+  --deep-water: #123f48;
+  --lagoon: #2d9899;
+  --bg-primary: var(--sand);
+  --text-primary: var(--deep-water);
+  --font-heading: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-body: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
 }
 
-* {
+*,
+*::before,
+*::after {
   box-sizing: border-box;
 }
 
-html,
-body,
-#root {
-  min-height: 100%;
+* {
   margin: 0;
+  padding: 0;
+}
+
+html {
+  min-width: 320px;
+  height: 100%;
+  overflow: hidden;
+  scroll-behavior: smooth;
 }
 
 body {
-  min-width: 320px;
+  height: 100%;
+  overflow: hidden;
+  background-color: var(--bg-primary);
+  background-image: linear-gradient(160deg, var(--warm-card) 0%, var(--sand-soft) 30%, var(--sand) 74%, #ead8b8 100%);
+  background-attachment: fixed;
+  background-size: auto;
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-synthesis: none;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1,
+h2 {
+  color: var(--text-primary);
+  font-family: var(--font-heading);
+  letter-spacing: -0.025em;
+}
+
+h1 {
+  font-size: 1.25rem;
+  font-weight: 800;
+  line-height: 1.05;
+}
+
+h2 {
+  font-size: clamp(1.55rem, 2.2vw, 2rem);
+  font-weight: 720;
+  line-height: 1.15;
+}
+
+#root {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  height: 100vh;
+  height: 100dvh;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+::selection {
+  background: rgba(0, 166, 178, 0.25);
+  color: var(--text-primary);
 }
