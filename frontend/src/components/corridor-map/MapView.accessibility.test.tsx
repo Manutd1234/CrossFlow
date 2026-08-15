@@ -195,6 +195,9 @@ describe('MapView traffic overlay controls', () => {
     expect(container.querySelectorAll('.hotspot-card.ui-sand-interactive')).toHaveLength(30);
     expect(container.querySelectorAll('.hotspot-card__credit-meta')).toHaveLength(30);
     expect(container.querySelectorAll('.hotspot-card__credit-meta a')).toHaveLength(60);
+    expect(container.querySelector<HTMLElement>('.hotspot-watch__list')?.tabIndex).toBe(0);
+    expect(container.querySelector('.hotspot-watch__list')?.getAttribute('aria-label'))
+      .toContain('Scrollable');
     expect(container.textContent).toContain('30-Area Congestion Watch');
     expect(container.textContent).toContain('20 critical');
     expect(container.textContent).toContain('10 heavy');
@@ -254,6 +257,9 @@ describe('MapView traffic overlay controls', () => {
       .toContain('Mukakuning Industrial');
     expect(container.querySelector('#corridor-feed-title')).not.toBeNull();
     expect(container.querySelector('.map-corridor-stack')?.children).toHaveLength(2);
+    expect(container.querySelector<HTMLElement>('.corridor-feed-list')?.tabIndex).toBe(0);
+    expect(container.querySelector('.corridor-feed-list')?.getAttribute('aria-label'))
+      .toContain('Scrollable');
     expect(mapPanel?.closest('[hidden]')).toBeNull();
 
     act(() => leafletTestState.hotspotClickHandlers[0]?.());

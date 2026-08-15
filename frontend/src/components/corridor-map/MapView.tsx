@@ -406,7 +406,7 @@ export const MapView: React.FC<MapViewProps> = ({
               {BATAM_HOTSPOT_WATCH_DISCLAIMER}
             </p>
 
-            <div className="hotspot-watch__list" role="list" aria-label="Batam congestion planning watch areas">
+            <div className="hotspot-watch__list" role="list" tabIndex={0} aria-label="Scrollable Batam congestion planning watch areas">
               {hotspots.map(zone => (
                 <article
                   key={zone.id}
@@ -541,7 +541,7 @@ export const MapView: React.FC<MapViewProps> = ({
           <h3 id="corridor-feed-title" className="corridor-feed-panel__title">
             Batam Corridor Telemetry Feeds ({corridors.length})
           </h3>
-          <div className="corridor-feed-list">
+          <div className="corridor-feed-list" tabIndex={0} aria-label="Scrollable Batam corridor telemetry feeds">
             {corridors.map((c) => (
               <button
                 key={c.id}
