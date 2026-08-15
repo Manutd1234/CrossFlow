@@ -3380,6 +3380,174 @@ def test_cross_border_route_api_uses_shared_latest_ferry_verification():
             os.environ[env_name] = original_env
 
 
+def test_exact_schedule_routing_uses_committed_simulation_when_freshness_store_is_down():
+    """A missing shared freshness row must not disable precise route planning.
+
+    The fallback is deliberately labelled as a committed timetable simulation:
+    it is useful for a deterministic departure/arrival plan, but cannot be
+    presented as a shared or live ferry verification result.
+    """
+    env_names = (
+        "VERCEL_ENV",
+        "CROSSFLOW_REQUIRE_DURABLE_FERRY_FRESHNESS",
+        "CROSSFLOW_FERRY_FRESHNESS_FALLBACK",
+    )
+    original_env = {name: os.environ.get(name) for name in env_names}
+    original_load = ferry_freshness_store.load
+    original_save = ferry_freshness_store.save
+    original_configured = ferry_freshness_store.configured
+    original_available = ferry_freshness_store.available
+    original_optimize_route = api_main.optimize_route
+    original_optimize_free_route = api_main.optimize_free_route
+    original_optimize_multi_stop_route = api_main.optimize_multi_stop_route
+
+    departure_at = datetime(2026, 8, 7, 14, 30, tzinfo=TZ)
+    arrive_by = datetime(2026, 8, 7, 20, 0, tzinfo=TZ)
+    committed_verified_at = ferry_schedule.committed_timetable_metadata()[
+        "last_verified_at"
+    ]
+    solver_calls = []
+
+    def scheduled_stub(route_type):
+        def solve(**kwargs):
+            solver_calls.append(kwargs)
+            planned_departure = kwargs.get("departure_at") or kwargs["now"]
+            return {
+                "route_type": route_type,
+                "corridor": {"id": route_type},
+                "planned_departure": planned_departure.isoformat(),
+                "estimated_arrival": (
+                    planned_departure + timedelta(minutes=30)
+                ).isoformat(),
+                "scheduling": {
+                    "mode": (
+                        "ARRIVE_BY" if kwargs.get("arrive_by") else "DEPART_AT"
+                    ),
+                },
+            }
+        return solve
+
+    def assert_committed_schedule(response, mode):
+        assert response["scheduling"]["mode"] == mode
+        assert response["planned_departure"]
+        assert response["estimated_arrival"]
+        assert response["data_source"] == "simulated"
+        provenance = response["schedule_provenance"]
+        assert provenance["source"] == "committed_timetable_simulation"
+        assert provenance["freshness_durability"] == "supabase_table_unavailable"
+        assert provenance["shared_freshness"] is False
+        assert provenance["live"] is False
+        assert provenance.get("latest_checked_at") is None
+        assert provenance["last_verified_at"] == committed_verified_at
+
+    try:
+        # Model a configured deployment whose durable Supabase table cannot be
+        # read or seeded. The committed snapshot remains available locally.
+        os.environ.pop("VERCEL_ENV", None)
+        os.environ["CROSSFLOW_REQUIRE_DURABLE_FERRY_FRESHNESS"] = "1"
+        os.environ["CROSSFLOW_FERRY_FRESHNESS_FALLBACK"] = "committed_snapshot"
+        ferry_freshness_store.load = lambda _snapshot_id: None
+        ferry_freshness_store.save = lambda *_args: None
+        ferry_freshness_store.configured = lambda: True
+        ferry_freshness_store.available = lambda: False
+        api_main.optimize_route = scheduled_stub("ROAD_ROUTE")
+        api_main.optimize_free_route = scheduled_stub("FREE_ROUTE")
+        api_main.optimize_multi_stop_route = scheduled_stub("MULTI_STOP_ROUTE")
+        ferry_schedule._reset_runtime_verification_for_tests()
+
+        with clock.frozen(WEEKDAY_1400):
+            responses = (
+                (
+                    api_main.api_optimize_route(api_main.RouteRequest(
+                        corridor_id="corridor-1",
+                        vehicle_type="COMMUTER",
+                        departure_at=departure_at,
+                    )),
+                    "DEPART_AT",
+                ),
+                (
+                    api_main.api_optimize_route(api_main.RouteRequest(
+                        corridor_id="corridor-1",
+                        vehicle_type="COMMUTER",
+                        arrive_by=arrive_by,
+                    )),
+                    "ARRIVE_BY",
+                ),
+                (
+                    api_main.api_optimize_free_route(api_main.FreeRouteRequest(
+                        origin_lat=1.1465,
+                        origin_lng=104.0125,
+                        destination_lat=1.1318,
+                        destination_lng=104.0554,
+                        vehicle_type="COMMUTER",
+                        departure_at=departure_at,
+                    )),
+                    "DEPART_AT",
+                ),
+                (
+                    api_main.api_optimize_free_route(api_main.FreeRouteRequest(
+                        origin_lat=1.1465,
+                        origin_lng=104.0125,
+                        destination_lat=1.1318,
+                        destination_lng=104.0554,
+                        vehicle_type="COMMUTER",
+                        arrive_by=arrive_by,
+                    )),
+                    "ARRIVE_BY",
+                ),
+                (
+                    api_main.api_optimize_multi_stop_route(
+                        api_main.MultiStopRouteRequest(
+                            stops=[
+                                {"lat": 1.1480, "lng": 104.0060, "name": "Batu Ampar"},
+                                {"lat": 1.1465, "lng": 104.0125, "name": "Nagoya Hill"},
+                                {"lat": 1.1318, "lng": 104.0554, "name": "Batam Centre"},
+                            ],
+                            vehicle_type="COMMUTER",
+                            departure_at=departure_at,
+                        ),
+                    ),
+                    "DEPART_AT",
+                ),
+                (
+                    api_main.api_optimize_multi_stop_route(
+                        api_main.MultiStopRouteRequest(
+                            stops=[
+                                {"lat": 1.1480, "lng": 104.0060, "name": "Batu Ampar"},
+                                {"lat": 1.1465, "lng": 104.0125, "name": "Nagoya Hill"},
+                                {"lat": 1.1318, "lng": 104.0554, "name": "Batam Centre"},
+                            ],
+                            vehicle_type="COMMUTER",
+                            arrive_by=arrive_by,
+                        ),
+                    ),
+                    "ARRIVE_BY",
+                ),
+            )
+    finally:
+        ferry_freshness_store.load = original_load
+        ferry_freshness_store.save = original_save
+        ferry_freshness_store.configured = original_configured
+        ferry_freshness_store.available = original_available
+        api_main.optimize_route = original_optimize_route
+        api_main.optimize_free_route = original_optimize_free_route
+        api_main.optimize_multi_stop_route = original_optimize_multi_stop_route
+        ferry_schedule._reset_runtime_verification_for_tests()
+        for name, value in original_env.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+    for response, mode in responses:
+        assert_committed_schedule(response, mode)
+    assert len(solver_calls) == 6
+    assert all(
+        call["schedule_verified_at"] == committed_verified_at
+        for call in solver_calls
+    )
+
+
 def test_cross_border_trucks_require_a_cargo_operator_feed():
     for vehicle_type in ("LIGHT_TRUCK", "CARGO_TRUCK"):
         try:

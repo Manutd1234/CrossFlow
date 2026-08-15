@@ -2,6 +2,7 @@
   "version": 2,
   "env": {
     "CROSSFLOW_REQUIRE_DURABLE_FERRY_FRESHNESS": "1",
+    "CROSSFLOW_FERRY_FRESHNESS_FALLBACK": "committed_snapshot",
     "CROSSFLOW_AUTH_MODE": "supabase"
   },
   "builds": [

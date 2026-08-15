@@ -298,6 +298,40 @@ describe('selectable road alternatives', () => {
     expect(container.querySelector('.route-direction-icon .lucide-move-up')).not.toBeNull();
   });
 
+  it('labels exact-time planning when it uses the committed timetable simulation', () => {
+    const container = renderIntoDom(
+      <RouteOptimizer
+        locations={ROUTE_LOCATIONS}
+        originId="mukakuning"
+        setOriginId={vi.fn()}
+        destinationId="batam_centre"
+        setDestinationId={vi.fn()}
+        result={{
+          ...result,
+          schedule_provenance: {
+            source: 'committed_timetable_simulation',
+            freshness_durability: 'supabase_table_unavailable',
+            shared_freshness: false,
+            live: false,
+          },
+        }}
+        setResult={vi.fn()}
+        resultSource="simulated"
+        setResultSource={vi.fn()}
+        vehicleType="COMMUTER"
+        setVehicleType={vi.fn()}
+        routePreference="BALANCED"
+        weather={0}
+        setWeather={vi.fn()}
+        hour={14}
+        setHour={vi.fn()}
+      />,
+    );
+
+    expect(container.textContent).toContain('committed timetable simulation');
+    expect(container.textContent).toContain('Verify the departure and book with the operator');
+  });
+
   it('renders ferry connections as sourced schedule slots without live claims', () => {
     const fixedNow = new Date('2026-08-09T22:30:00.000Z');
     const publishedSailing = offlineFerries(fixedNow, fixedNow, 12)[0];

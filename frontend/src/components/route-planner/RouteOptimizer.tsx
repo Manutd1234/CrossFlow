@@ -1136,6 +1136,20 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
               ) : null}
             </section>
 
+            {result.schedule_provenance?.source === 'committed_timetable_simulation' ? (
+              <p role="note" className="route-alternatives-note">
+                <TriangleAlert
+                  size={ICON_SIZE.medium}
+                  aria-hidden="true"
+                  className="route-note-icon"
+                />
+                <span>
+                  Exact times use the committed timetable simulation because shared schedule
+                  freshness is unavailable. Verify the departure and book with the operator.
+                </span>
+              </p>
+            ) : null}
+
             {result.route_code ? (
               <section className="route-code-card" aria-labelledby="route-code-card-heading">
                 <div>

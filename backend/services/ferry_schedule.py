@@ -8,6 +8,7 @@ never invented here. Terminal queue metrics remain explicitly modelled.
 
 import copy
 import json
+import os
 import threading
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
@@ -89,6 +90,22 @@ _runtime_last_verified_at: Optional[str] = None
 _runtime_latest_checked_at: Optional[str] = None
 
 PORTS = sorted({r.departure_port for r in FERRY_ROUTES})
+
+
+def committed_snapshot_fallback_enabled() -> bool:
+    """Whether a deployment explicitly permits committed timetable planning.
+
+    A committed snapshot is suitable for deterministic scheduling simulations,
+    but it is not a replacement for shared freshness in a multi-instance
+    deployment.  Requiring an exact value avoids accidentally enabling that
+    trade-off through a generic truthy environment variable.
+    """
+    return (
+        os.environ.get("CROSSFLOW_FERRY_FRESHNESS_FALLBACK", "")
+        .strip()
+        .casefold()
+        == "committed_snapshot"
+    )
 
 
 def published_services_for_operator(operator: str) -> Tuple[Dict[str, Any], ...]:
@@ -459,6 +476,29 @@ def timetable_metadata(*, load_durable: bool = True) -> Dict[str, Any]:
             if verified_at != source_snapshot_verified_at
             else None
         )
+    return metadata
+
+
+def committed_timetable_metadata() -> Dict[str, Any]:
+    """Return the bundled timetable as a non-live planning input.
+
+    This intentionally discards process-local refresh state.  It is used when
+    a route can still be calculated against the committed departure slots but
+    the shared Supabase freshness record is absent or cannot be read.  Keeping
+    the snapshot's original verification time makes the fallback auditable and
+    prevents an instance-local check from being represented as durable or
+    current.
+    """
+    metadata = timetable_metadata(load_durable=False)
+    snapshot_verified_at = _TIMETABLE["last_verified_at"]
+    metadata["latest_checked_at"] = None
+    metadata["last_verified_at"] = snapshot_verified_at
+    metadata["snapshot_verified_at"] = snapshot_verified_at
+    metadata["snapshot_last_verified_at"] = snapshot_verified_at
+    for source in metadata["sources"]:
+        source_snapshot_verified_at = source["snapshot_verified_at"]
+        source["last_verified_at"] = source_snapshot_verified_at
+        source["latest_successful_validation_at"] = None
     return metadata
 
 
