@@ -237,7 +237,7 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .app-brand-name span {
-  color: var(--accent-cyan);
+  color: var(--accent-emerald);
 }
 
 .app-brand-tagline {
@@ -330,7 +330,7 @@ h1, h2, h3, h4, h5, h6 {
   width: min(100%, var(--content-max));
   min-height: 0;
   margin: 0 auto 40px;
-  padding: 14px var(--workspace-gutter) 0;
+  padding: 16px var(--workspace-gutter) 0;
   display: flex;
   flex: 1;
   flex-direction: column;
@@ -340,7 +340,7 @@ h1, h2, h3, h4, h5, h6 {
   position: sticky;
   top: 88px;
   z-index: 900;
-  min-height: 70px;
+  min-height: 0;
   padding: var(--navigation-rail-padding);
   display: flex;
   align-items: center;
@@ -359,7 +359,7 @@ h1, h2, h3, h4, h5, h6 {
   top: auto;
   z-index: auto;
   min-width: 0;
-  min-height: 62px;
+  min-height: 0;
   flex: 1 1 0;
   max-width: min(
     calc(100vw - var(--workspace-gutter) - var(--workspace-gutter)),
@@ -461,8 +461,8 @@ h1, h2, h3, h4, h5, h6 {
 .app-navigation-button {
   position: relative;
   width: 100%;
-  min-height: 52px;
-  padding: 7px 10px;
+  min-height: 0;
+  padding: 4px;
   display: grid;
   grid-template-columns: 34px minmax(0, 1fr);
   align-items: center;
@@ -548,7 +548,7 @@ h1, h2, h3, h4, h5, h6 {
 .app-main {
   min-width: 0;
   min-height: 0;
-  margin-top: 12px;
+  margin-top: 0;
   display: flex;
   flex: 1;
   flex-direction: column;
@@ -563,25 +563,16 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .app-view-heading {
-  min-height: 78px;
-  padding-bottom: 20px;
+  min-height: 0;
+  padding-bottom: 16px;
   display: flex;
   flex: 0 0 auto;
-  align-items: flex-end;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 24px;
 }
 
-.app-view-heading p {
-  color: var(--lagoon-text);
-  font-size: 0.66rem;
-  font-weight: 750;
-  letter-spacing: 0.11em;
-  text-transform: uppercase;
-}
-
 .app-view-heading h2 {
-  margin-top: 3px;
   font-size: clamp(1.55rem, 2.2vw, 2rem);
   font-weight: 720;
   line-height: 1.15;
@@ -614,6 +605,16 @@ h1, h2, h3, h4, h5, h6 {
   flex: 1;
   grid-template-columns: minmax(0, 1fr);
   overflow: hidden;
+}
+
+.analytics-workspace-stack {
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  display: grid;
+  align-content: start;
+  gap: 16px;
+  overflow: auto;
 }
 
 .app-screen-layout {
@@ -3405,15 +3406,6 @@ h1, h2, h3, h4, h5, h6 {
   transition: background 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
 }
 
-.ui-button-primary.app-pitch-button {
-  width: 46px;
-  height: 46px;
-  min-width: 46px;
-  min-height: 46px;
-  padding: 0;
-  flex: 0 0 46px;
-}
-
 .ui-button-primary:hover {
   background: linear-gradient(135deg, var(--lagoon-text), var(--palm-text));
   color: #ffffff;
@@ -3583,7 +3575,7 @@ a:focus-visible {
   }
 }
 
-@media (max-width: 1000px) {
+@media (max-width: 700px) {
   .app-header-inner {
     flex-wrap: wrap;
   }
@@ -3607,7 +3599,7 @@ a:focus-visible {
 @media (max-width: 900px) {
 
   .app-workspace {
-    padding-top: 14px;
+    padding-top: 16px;
   }
 
   .app-topbar {
@@ -3619,20 +3611,20 @@ a:focus-visible {
   }
 
   .app-navigation-list {
-    width: max-content;
-    min-width: 100%;
+    width: 100%;
+    min-width: 0;
     flex-direction: row;
     gap: 5px;
   }
 
   .app-navigation-list li {
-    flex: 1 0 185px;
+    flex: 1 1 0;
   }
 
   .app-navigation-button {
-    min-height: 54px;
+    min-height: 0;
     grid-template-columns: 34px minmax(0, 1fr);
-    padding: 8px 10px;
+    padding: 4px;
   }
 
   .app-navigation-icon {
@@ -3640,8 +3632,11 @@ a:focus-visible {
     height: 34px;
   }
 
-  .app-view-heading {
-    padding-top: 22px;
+}
+
+@media (max-width: 850px) {
+  .app-navigation-copy span {
+    display: none;
   }
 }
 
@@ -3651,15 +3646,11 @@ a:focus-visible {
   }
 
   .app-navigation-list li {
-    flex-basis: auto;
-  }
-
-  .app-navigation-copy span {
-    display: none;
+    flex: 1 1 0;
   }
 
   .app-navigation-button {
-    min-width: max-content;
+    min-width: 0;
     grid-template-columns: 32px auto;
     gap: 7px;
   }
@@ -3725,30 +3716,18 @@ a:focus-visible {
     font-size: 0.66rem;
   }
 
-  .ui-button-primary.app-pitch-button {
-    width: 40px;
-    height: 40px;
-    min-width: 40px;
-    min-height: 40px;
-    flex-basis: 40px;
-  }
-
   .app-workspace {
     padding-inline: 10px;
   }
 
   .app-view-heading {
     min-height: 0;
-    padding: 20px 12px 8px;
+    padding: 0 12px 16px;
     align-items: flex-start;
   }
 
   .app-view-heading h2 {
     font-size: 1.42rem;
-  }
-
-  .app-view-heading div > span {
-    font-size: 0.72rem;
   }
 
   .app-track-label {

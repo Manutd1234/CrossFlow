@@ -37,16 +37,18 @@ describe('application shell DOM', () => {
     expect(navigation).not.toBeNull();
 
     const buttons = Array.from(navigation?.querySelectorAll('button') ?? []);
-    expect(buttons).toHaveLength(4);
+    expect(buttons).toHaveLength(3);
     expect(navigation?.querySelector('[role="tablist"]')).not.toBeNull();
     expect(buttons.every(button => button.getAttribute('role') === 'tab')).toBe(true);
     expect(buttons.every(button => button.type === 'button')).toBe(true);
     expect(buttons.filter(button => button.getAttribute('aria-current') === 'page'))
       .toHaveLength(1);
-    expect(buttons[0].textContent).toContain('Corridor Map');
+    expect(buttons[0].textContent).toContain('Congestion');
 
-    const routeButton = buttons.find(button => button.textContent?.includes('Route Solver'));
+    const routeButton = buttons.find(button => button.textContent?.includes('Route'));
     expect(routeButton).toBeDefined();
+    const analyticsButton = buttons.find(button => button.textContent?.includes('Analytics'));
+    expect(analyticsButton?.querySelector('.lucide-chart-column')).not.toBeNull();
     act(() => buttons[0].dispatchEvent(new KeyboardEvent('keydown', {
       key: 'ArrowRight',
       bubbles: true,
@@ -59,12 +61,10 @@ describe('application shell DOM', () => {
     expect(setActiveTab).toHaveBeenCalledWith('route');
   });
 
-  it('renders honest telemetry status and an accessible presentation action', () => {
-    const onOpenPitch = vi.fn();
+  it('renders honest telemetry status without a presentation action', () => {
     const setActiveTab = vi.fn();
     const container = renderIntoDom(
       <Header
-        onOpenPitch={onOpenPitch}
         activeTab="analytics"
         setActiveTab={setActiveTab}
         dataSource="simulated"
@@ -88,22 +88,14 @@ describe('application shell DOM', () => {
       .not.toBeNull();
 
     const status = container.querySelector('[role="status"]');
-    expect(status?.getAttribute('aria-label')).toContain('Current model feed');
+    expect(status?.getAttribute('aria-label')).toContain('Model Estimate');
     const telemetryGroup = container.querySelector(
-      '[role="group"][aria-label="Telemetry status and Batam clock"]',
+      '[role="group"][aria-label="Telemetry status and clock"]',
     );
-    expect(telemetryGroup?.textContent).toContain('Batam time 14:30:00 WIB');
+    expect(telemetryGroup?.textContent).toContain('Model Estimate14:30:00 WIB');
+    expect(telemetryGroup?.textContent).not.toContain('Batam time');
 
-    const pitchButton = container.querySelector<HTMLButtonElement>(
-      'button[aria-haspopup="dialog"]',
-    );
-    expect(pitchButton?.type).toBe('button');
-    expect(pitchButton?.classList.contains('ui-button-primary')).toBe(true);
-    expect(pitchButton?.textContent).toBe('');
-    expect(pitchButton?.getAttribute('title')).toBe('Present solution');
-    expect(pitchButton?.querySelector('svg')?.getAttribute('width')).toBe('18');
-    act(() => pitchButton?.click());
-    expect(onOpenPitch).toHaveBeenCalledOnce();
+    expect(container.querySelector('button[aria-haspopup="dialog"]')).toBeNull();
   });
 
   it('renders a single semantic route form with labelled controls and an empty state', () => {

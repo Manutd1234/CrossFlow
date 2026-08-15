@@ -1,8 +1,8 @@
 import { type KeyboardEvent, useRef } from 'react';
-import { Anchor, ChartColumn, Map, NavigationIcon } from 'lucide-react';
+import { ChartColumn, Map, NavigationIcon } from 'lucide-react';
 import { ICON_SIZE } from '../../theme/iconSizes';
 
-export type AppTab = 'map' | 'route' | 'ferry' | 'analytics';
+export type AppTab = 'map' | 'route' | 'analytics';
 
 interface NavigationProps {
   activeTab: AppTab;
@@ -12,26 +12,20 @@ interface NavigationProps {
 const NAV_ITEMS = [
   {
     id: 'map',
-    label: 'Corridor Map',
+    label: 'Congestion',
     description: 'Network conditions',
     icon: Map,
   },
   {
     id: 'route',
-    label: 'Route Solver',
+    label: 'Route',
     description: 'Plan a road journey',
     icon: NavigationIcon,
   },
   {
-    id: 'ferry',
-    label: 'Ferry & Port',
-    description: 'Terminal intelligence',
-    icon: Anchor,
-  },
-  {
     id: 'analytics',
-    label: 'Operations',
-    description: 'Flow & carbon insights',
+    label: 'Analytics',
+    description: 'Ferry, port & operations',
     icon: ChartColumn,
   },
 ] as const satisfies ReadonlyArray<{

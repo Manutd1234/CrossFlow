@@ -23,7 +23,6 @@ const MapView = lazy(() => import('./components/corridor-map/MapView').then(modu
 const RouteOptimizer = lazy(() => import('./components/route-planner/RouteOptimizer').then(module => ({ default: module.RouteOptimizer })));
 const FerryPortTracker = lazy(() => import('./components/ferry-port/FerryPortTracker').then(module => ({ default: module.FerryPortTracker })));
 const OperationsAnalytics = lazy(() => import('./components/operations/OperationsAnalytics').then(module => ({ default: module.OperationsAnalytics })));
-const PitchDeckModal = lazy(() => import('./components/app-shell/PitchDeckModal').then(module => ({ default: module.PitchDeckModal })));
 
 function LoadingPanel() {
   return (
@@ -34,32 +33,23 @@ function LoadingPanel() {
   );
 }
 
-const VIEW_META: Record<AppTab, { eyebrow: string; title: string; description: string }> = {
+const VIEW_META: Record<AppTab, { title: string; description: string }> = {
   map: {
-    eyebrow: 'Network Intelligence',
     title: 'Batam Congestion watch',
     description: 'Scan 30 photo-backed planning hotspots and move directly from an area to route planning.',
   },
   route: {
-    eyebrow: 'Decision Support',
     title: 'Cross-Border Route Planner',
     description: 'Compose local roads, a published ferry crossing, and onward roads between Singapore and Batam.',
   },
-  ferry: {
-    eyebrow: 'Cross-Border Operations',
-    title: 'Ferry & Port Intelligence',
-    description: 'Track terminal queues, sailing schedules, and port-side logistics at a glance.',
-  },
   analytics: {
-    eyebrow: 'Operational Performance',
-    title: 'Flow & Carbon Analytics',
-    description: 'Review network performance, bottlenecks, and decision-support indicators.',
+    title: 'Ferry, Port & Operations Analytics',
+    description: 'Track terminal activity and review network performance, bottlenecks, and decision-support indicators.',
   },
 };
 
 export function App() {
   const [activeTab, setActiveTab] = useState<AppTab>('map');
-  const [isPitchOpen, setIsPitchOpen] = useState<boolean>(false);
 
   const [corridors, setCorridors] = useState<Corridor[]>(INITIAL_CORRIDORS);
   const [ferries, setFerries] = useState<FerrySchedule[]>(INITIAL_FERRIES);
@@ -222,8 +212,6 @@ export function App() {
     }
   }, []);
 
-  const openPitch = useCallback(() => setIsPitchOpen(true), []);
-  const closePitch = useCallback(() => setIsPitchOpen(false), []);
   const activeView = VIEW_META[activeTab];
   const operations = operationsSnapshot?.data ?? MOCK_OPERATIONS;
 
@@ -232,7 +220,6 @@ export function App() {
       <a className="app-skip-link" href="#main-content">Skip to main content</a>
 
       <Header
-        onOpenPitch={openPitch}
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         dataSource={dataSource}
@@ -250,7 +237,6 @@ export function App() {
         >
           <div className="app-view-heading">
             <div>
-              <p>{activeView.eyebrow}</p>
               <h2 id="active-view-title">{activeView.title}</h2>
               <span>{activeView.description}</span>
             </div>
@@ -289,35 +275,31 @@ export function App() {
                 />
               )}
 
-              {activeTab === 'ferry' && (
-                <FerryPortTracker
-                  ferries={ferries}
-                  dataSource={ferrySource}
-                  timetable={ferryTimetable}
-                  ports={ports}
-                  portSource={portSource}
-                  portsLoading={portsLoading}
-                  portsError={portsError}
-                  isRefreshingOfficialSources={isFerryRefreshing}
-                  onRefreshOfficialSources={handleRefreshOfficialFerrySources}
-                />
-              )}
-
               {activeTab === 'analytics' && (
-                <OperationsAnalytics
-                  operations={operations}
-                  operationsSnapshot={operationsSnapshot}
-                  corridors={corridors}
-                />
+                <div className="analytics-workspace-stack">
+                  <FerryPortTracker
+                    ferries={ferries}
+                    dataSource={ferrySource}
+                    timetable={ferryTimetable}
+                    ports={ports}
+                    portSource={portSource}
+                    portsLoading={portsLoading}
+                    portsError={portsError}
+                    isRefreshingOfficialSources={isFerryRefreshing}
+                    onRefreshOfficialSources={handleRefreshOfficialFerrySources}
+                  />
+                  <OperationsAnalytics
+                    operations={operations}
+                    operationsSnapshot={operationsSnapshot}
+                    corridors={corridors}
+                  />
+                </div>
               )}
             </Suspense>
           </section>
         </main>
       </div>
 
-      <Suspense fallback={null}>
-        {isPitchOpen && <PitchDeckModal isOpen onClose={closePitch} />}
-      </Suspense>
     </>
   );
 }
