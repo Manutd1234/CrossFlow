@@ -93,8 +93,8 @@ describe('operations provenance presentation', () => {
     const markup = renderToStaticMarkup(view);
 
     expect(markup).toContain('class="app-screen-layout operations-layout"');
-    expect(markup).toContain('Operations planning data source: LOCAL PLANNING CONTINUITY');
-    expect(markup).toContain('workspace-subtabs__rail-accessory');
+    expect(markup).not.toContain('Operations planning data source:');
+    expect(markup).not.toContain('workspace-subtabs__rail-accessory');
     expect(markup).not.toContain('operations-header');
     expect(text).not.toContain('OFFICIAL CONTEXT LOADED');
     expect(text).toContain('Batam Authority Operating Context');
@@ -152,11 +152,8 @@ describe('operations provenance presentation', () => {
     const text = staticText(view);
     const markup = renderToStaticMarkup(view);
 
-    expect(markup).toContain('Operations planning data source: PLANNING MODEL API CONNECTED');
-    expect(markup).toContain('operations-tabs__planning-badge is-connected');
-    expect(markup).not.toContain('badge operations-tabs__planning-badge');
-    expect(markup).toContain('The planning API responded successfully');
-    expect(markup).toContain('not observed or measured');
+    expect(markup).not.toContain('Operations planning data source:');
+    expect(markup).not.toContain('operations-tabs__planning-badge');
     expect(text).toContain('Queue Emissions Pressure');
     expect(text).not.toContain('kg CO2/hr');
     expect(text).not.toContain('TOMTOM');
@@ -225,7 +222,9 @@ describe('operations provenance presentation', () => {
     expect(visiblePanels()[0]?.querySelector('.operations-alerts__acknowledged-count')?.textContent)
       .toBe('1');
 
-    expect(container.querySelectorAll('[role="tab"]')).toHaveLength(5);
+    expect(container.querySelectorAll('[role="tab"]')).toHaveLength(6);
+    expect(Array.from(container.querySelectorAll('[role="tab"]'))
+      .some(tab => tab.textContent?.includes('Ports'))).toBe(true);
 
     selectWorkspaceTab(container, 'History');
     await act(async () => {
@@ -250,9 +249,9 @@ describe('operations provenance presentation', () => {
     selectWorkspaceTab(container, 'Overview');
     expect(visiblePanels()).toHaveLength(1);
     expect(visiblePanels()[0]?.textContent).toContain('Batam Authority Operating Context');
-    expect(container.querySelector('#operations-workspace-panel-3')?.textContent)
-      .toContain('Historical Congestion Analysis');
     expect(container.querySelector('#operations-workspace-panel-4')?.textContent)
+      .toContain('Historical Congestion Analysis');
+    expect(container.querySelector('#operations-workspace-panel-5')?.textContent)
       .toContain('Random Forest Congestion Forecasting Engine');
 
     selectWorkspaceTab(container, 'History');

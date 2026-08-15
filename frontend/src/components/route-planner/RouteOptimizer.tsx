@@ -1485,7 +1485,7 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
                 },
                 {
                   id: 'connections',
-                  label: 'Connections',
+                  label: 'Comparison',
                   content: (
                     <div className="route-result-tab-content">
             {/* All-Vehicle Mode Comparison Grid */}
@@ -1565,7 +1565,7 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
             )}
 
 
-            <section aria-labelledby="connected-ferries-heading">
+            <section aria-labelledby="connected-ferries-heading" hidden>
               <h3 id="connected-ferries-heading" className="route-ferry-connections-heading">
                 <Anchor size={ICON_SIZE.medium} aria-hidden="true" color="var(--accent-cyan)" /> {isMultimodal ? 'Ferry schedule evidence' : 'Published ferry connections after arrival'}
               </h3>

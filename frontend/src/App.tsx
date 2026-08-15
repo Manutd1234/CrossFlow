@@ -277,21 +277,23 @@ export function App() {
 
               {activeTab === 'analytics' && (
                 <div className="analytics-workspace-stack">
-                  <FerryPortTracker
-                    ferries={ferries}
-                    dataSource={ferrySource}
-                    timetable={ferryTimetable}
-                    ports={ports}
-                    portSource={portSource}
-                    portsLoading={portsLoading}
-                    portsError={portsError}
-                    isRefreshingOfficialSources={isFerryRefreshing}
-                    onRefreshOfficialSources={handleRefreshOfficialFerrySources}
-                  />
                   <OperationsAnalytics
                     operations={operations}
                     operationsSnapshot={operationsSnapshot}
                     corridors={corridors}
+                    ferryAndPortsContent={(
+                      <FerryPortTracker
+                        ferries={ferries}
+                        dataSource={ferrySource}
+                        timetable={ferryTimetable}
+                        ports={ports}
+                        portSource={portSource}
+                        portsLoading={portsLoading}
+                        portsError={portsError}
+                        isRefreshingOfficialSources={isFerryRefreshing}
+                        onRefreshOfficialSources={handleRefreshOfficialFerrySources}
+                      />
+                    )}
                   />
                 </div>
               )}

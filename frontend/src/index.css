@@ -614,7 +614,32 @@ h1, h2, h3, h4, h5, h6 {
   display: grid;
   align-content: start;
   gap: 16px;
-  overflow: auto;
+  grid-auto-rows: max-content;
+  overflow: visible;
+}
+
+.analytics-workspace-stack > * {
+  min-height: max-content;
+}
+
+.app-workspace {
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-y: auto;
+  scrollbar-gutter: stable;
+  touch-action: pan-y;
+}
+
+/* Nested page widgets may scroll their own content, but must always hand the
+   wheel/touch chain back to the app workspace when they reach an edge. */
+.app-workspace * {
+  overscroll-behavior-y: auto !important;
+}
+
+.app-main,
+.app-view-content {
+  flex: 0 0 auto;
+  overflow: visible;
 }
 
 .app-screen-layout {
@@ -765,25 +790,11 @@ h1, h2, h3, h4, h5, h6 {
     overscroll-behavior: contain;
   }
 
-  .operations-tabs > #operations-workspace-panel-2:not([hidden]) {
-    min-height: 0;
-    display: flex;
-    flex: 1;
-    overflow: hidden;
-  }
-
   .operations-tabs > #operations-workspace-panel-3:not([hidden]) {
     min-height: 0;
     display: flex;
     flex: 1;
     overflow: hidden;
-  }
-
-  .operations-tabs > #operations-workspace-panel-3:not([hidden]) > .operations-history-panel {
-    min-height: 0;
-    flex: 1;
-    overflow-y: auto;
-    overscroll-behavior: contain;
   }
 
   .operations-tabs > #operations-workspace-panel-4:not([hidden]) {
@@ -793,7 +804,21 @@ h1, h2, h3, h4, h5, h6 {
     overflow: hidden;
   }
 
-  .operations-tabs > #operations-workspace-panel-4:not([hidden]) > .operations-model-panel {
+  .operations-tabs > #operations-workspace-panel-4:not([hidden]) > .operations-history-panel {
+    min-height: 0;
+    flex: 1;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .operations-tabs > #operations-workspace-panel-5:not([hidden]) {
+    min-height: 0;
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  .operations-tabs > #operations-workspace-panel-5:not([hidden]) > .operations-model-panel {
     min-height: 0;
     flex: 1;
     overflow-y: auto;
@@ -2451,7 +2476,7 @@ h1, h2, h3, h4, h5, h6 {
   .app-workspace {
     overflow-x: hidden;
     overflow-y: auto;
-    overscroll-behavior: contain;
+    overscroll-behavior-y: auto;
   }
 
   .app-main {
@@ -3187,7 +3212,9 @@ h1, h2, h3, h4, h5, h6 {
   overflow: hidden;
   border: 1px solid rgba(0, 110, 120, 0.24);
   border-radius: var(--radius-lg);
-  background: rgba(16, 185, 129, 0.09);
+  background:
+    linear-gradient(rgba(16, 185, 129, 0.09), rgba(16, 185, 129, 0.09)),
+    var(--warm-card);
   box-shadow: var(--shadow-card);
 }
 
