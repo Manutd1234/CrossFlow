@@ -48,6 +48,43 @@ say()  { printf '%s\n' "${B}▸${N} $*"; }
 warn() { printf '%s\n' "${Y}!${N} $*"; }
 die()  { printf '%s\n' "${R}✗${N} $*" >&2; exit 1; }
 
+# --- local configuration ---------------------------------------------------
+
+# Load .env so Supabase auth can be configured by editing one gitignored file
+# instead of exporting variables into the exact shell that starts uvicorn — the
+# most common reason /api/auth/status reports configured:false.
+#
+# Parsed, not sourced: only KEY=VALUE lines with a valid identifier are read, so
+# a stray command in .env cannot execute. Values already present in the
+# environment win, so an explicit export still overrides the file.
+load_dotenv() {
+  local file="$ROOT/.env" line key value
+  [ -f "$file" ] || return 0
+  local loaded=0
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      ''|'#'*) continue ;;
+    esac
+    line="${line#export }"
+    key="${line%%=*}"
+    value="${line#*=}"
+    [ "$key" = "$line" ] && continue                      # no '=' on the line
+    printf '%s' "$key" | grep -qE '^[A-Za-z_][A-Za-z0-9_]*$' || continue
+    # Strip one layer of matching quotes.
+    case "$value" in
+      \"*\") value="${value#\"}"; value="${value%\"}" ;;
+      \'*\') value="${value#\'}"; value="${value%\'}" ;;
+    esac
+    [ -n "${!key-}" ] && continue                          # already set: leave it
+    [ -z "$value" ] && continue                            # blank placeholder
+    export "$key=$value"
+    loaded=$((loaded + 1))
+  done < "$file"
+  [ "$loaded" -gt 0 ] && printf '%s\n' "${DIM}  loaded $loaded variable(s) from .env${N}"
+  return 0
+}
+load_dotenv
+
 # --- preflight -------------------------------------------------------------
 
 if [ "$RUN_BACKEND" = 1 ] || [ "$INSTALL_ONLY" = 1 ]; then

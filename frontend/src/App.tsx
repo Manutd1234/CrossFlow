@@ -3,10 +3,13 @@ import { Header } from './components/app-shell/Header';
 import type { AppTab } from './components/app-shell/Navigation';
 
 import {
-  Corridor, CorridorRoute, DataSource, FerrySchedule, Fetched, LiveTrafficData,
+  AuthSession, AuthStatus, Corridor, CorridorRoute, DataSource, FerrySchedule, Fetched, LiveTrafficData,
   FerryRefreshReport, FerryTimetableMetadata, OperationsSummary, PortStatus, Provenance,
-  RouteLocation, RouteOptimizationResult, RoutePreference, VehicleType,
+  RouteLocation, RouteOptimizationResult, RoutePreference, StoredSession, VehicleType,
 } from './types';
+import {
+  fetchAuthStatus, fetchSession, readStoredSession, supabaseConfigured, validSession,
+} from './services/auth';
 import {
   fetchCorridorRoutes, fetchCorridors, fetchFerries, fetchOperationsSummary,
   fetchLiveTraffic, fetchPortIntelligence, fetchRouteLocations,
@@ -24,6 +27,7 @@ const RouteOptimizer = lazy(() => import('./components/route-planner/RouteOptimi
 const FerryPortTracker = lazy(() => import('./components/ferry-port/FerryPortTracker').then(module => ({ default: module.FerryPortTracker })));
 const OperationsAnalytics = lazy(() => import('./components/operations/OperationsAnalytics').then(module => ({ default: module.OperationsAnalytics })));
 const PitchDeckModal = lazy(() => import('./components/app-shell/PitchDeckModal').then(module => ({ default: module.PitchDeckModal })));
+const SignInPanel = lazy(() => import('./components/auth/SignInPanel').then(module => ({ default: module.SignInPanel })));
 
 function LoadingPanel() {
   return (
@@ -60,6 +64,10 @@ const VIEW_META: Record<AppTab, { eyebrow: string; title: string; description: s
 export function App() {
   const [activeTab, setActiveTab] = useState<AppTab>('map');
   const [isPitchOpen, setIsPitchOpen] = useState<boolean>(false);
+  const [isSignInOpen, setIsSignInOpen] = useState<boolean>(false);
+  const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
+  const [session, setSession] = useState<StoredSession | null>(() => readStoredSession());
+  const [identity, setIdentity] = useState<AuthSession | null>(null);
 
   const [corridors, setCorridors] = useState<Corridor[]>(INITIAL_CORRIDORS);
   const [ferries, setFerries] = useState<FerrySchedule[]>(INITIAL_FERRIES);
@@ -192,6 +200,42 @@ export function App() {
       });
   }, []);
 
+  /**
+   * Restore a stored session on load and ask the server who it belongs to.
+   *
+   * Every failure here is silent by design: auth is optional, so an expired
+   * token or an unreachable Supabase must leave the public corridor, ferry and
+   * analytics views exactly as usable as they are signed out.
+   */
+  useEffect(() => {
+    let cancelled = false;
+    fetchAuthStatus().then(status => {
+      if (!cancelled) setAuthStatus(status);
+    });
+
+    const stored = readStoredSession();
+    if (!stored) return () => { cancelled = true; };
+    validSession(stored)
+      .then(async fresh => {
+        const resolved = await fetchSession(fresh);
+        if (cancelled) return;
+        setSession(fresh);
+        setIdentity(resolved);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setSession(null);
+        setIdentity(null);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Offering sign-in needs both halves configured: the browser needs the
+  // Supabase project to authenticate against, and the API needs to be able to
+  // resolve a role from it.
+  const signInAvailable = supabaseConfigured()
+    && (authStatus === null || authStatus.enabled);
+
   const handleSelectCorridorAndSolve = useCallback((corridorId: string) => {
     const corridor = corridors.find(item => item.id === corridorId);
     if (corridor?.origin && corridor.destination) {
@@ -238,6 +282,9 @@ export function App() {
 
       <Header
         onOpenPitch={openPitch}
+        onOpenSignIn={() => setIsSignInOpen(true)}
+        identity={identity}
+        signInAvailable={signInAvailable}
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         dataSource={dataSource}
@@ -323,6 +370,16 @@ export function App() {
 
       <Suspense fallback={null}>
         {isPitchOpen && <PitchDeckModal isOpen onClose={closePitch} />}
+        {isSignInOpen && (
+          <SignInPanel
+            status={authStatus}
+            session={session}
+            identity={identity}
+            onSessionChange={setSession}
+            onIdentityChange={setIdentity}
+            onClose={() => setIsSignInOpen(false)}
+          />
+        )}
       </Suspense>
     </>
   );

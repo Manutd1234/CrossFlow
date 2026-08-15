@@ -1,7 +1,8 @@
 {
   "version": 2,
   "env": {
-    "CROSSFLOW_REQUIRE_DURABLE_FERRY_FRESHNESS": "1"
+    "CROSSFLOW_REQUIRE_DURABLE_FERRY_FRESHNESS": "1",
+    "CROSSFLOW_AUTH_MODE": "supabase"
   },
   "builds": [
     {

@@ -1,13 +1,16 @@
 import { useEffect, useState } from 'react';
-import { Presentation } from 'lucide-react';
+import { LogIn, Presentation, ShieldCheck } from 'lucide-react';
 import { ICON_SIZE } from '../../theme/iconSizes';
-import type { DataSource, Provenance } from '../../types';
+import type { AuthSession, DataSource, Provenance } from '../../types';
 import { toBatamIso } from '../../utils/batamTime';
 import { formatClock } from '../../utils/format';
 import { Navigation, type AppTab } from './Navigation';
 
 interface HeaderProps {
   onOpenPitch: () => void;
+  onOpenSignIn: () => void;
+  identity: AuthSession | null;
+  signInAvailable: boolean;
   activeTab: AppTab;
   setActiveTab: (tab: AppTab) => void;
   dataSource: DataSource;
@@ -51,6 +54,9 @@ function RollingBatamClock({ anchor }: { anchor: string }) {
 
 export function Header({
   onOpenPitch,
+  onOpenSignIn,
+  identity,
+  signInAvailable,
   activeTab,
   setActiveTab,
   dataSource,
@@ -112,6 +118,33 @@ export function Header({
               </span>
             </span>
           </div>
+
+          {/* Hidden entirely when the server says sign-in is impossible, so
+              the demo never shows a control that cannot succeed. */}
+          {signInAvailable ? (
+            <button
+              type="button"
+              className="app-signin-button"
+              onClick={onOpenSignIn}
+              aria-haspopup="dialog"
+              aria-label={identity
+                ? `Signed in as ${identity.display_name || identity.user_id}, role ${identity.role}. Open account panel`
+                : 'Sign in to CrossFlow'}
+              title={identity ? 'Account' : 'Sign in'}
+            >
+              {identity ? (
+                <>
+                  <ShieldCheck size={ICON_SIZE.medium} aria-hidden="true" />
+                  <span className="app-signin-button__role">{identity.role}</span>
+                </>
+              ) : (
+                <>
+                  <LogIn size={ICON_SIZE.medium} aria-hidden="true" />
+                  <span className="app-signin-button__label">Sign in</span>
+                </>
+              )}
+            </button>
+          ) : null}
 
           <button
             type="button"

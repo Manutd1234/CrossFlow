@@ -1,3 +1,11 @@
+# Local secrets. `.env.example` is tracked documentation; a real `.env` holds
+# the Supabase project key and must never be committed. Without this rule a
+# `.env` created from the example shows up as an untracked file and lands in
+# the next `git add -A`.
+.env
+.env.*
+!.env.example
+
 # Dependencies
 node_modules
 .venv

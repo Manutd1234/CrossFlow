@@ -64,6 +64,9 @@ describe('application shell DOM', () => {
     const setActiveTab = vi.fn();
     const container = renderIntoDom(
       <Header
+        onOpenSignIn={vi.fn()}
+        identity={null}
+        signInAvailable={false}
         onOpenPitch={onOpenPitch}
         activeTab="analytics"
         setActiveTab={setActiveTab}

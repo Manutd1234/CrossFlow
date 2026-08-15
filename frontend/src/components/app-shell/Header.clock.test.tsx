@@ -27,6 +27,9 @@ describe('header Batam clock', () => {
     root = createRoot(container);
     act(() => root?.render(
       <Header
+        onOpenSignIn={vi.fn()}
+        identity={null}
+        signInAvailable={false}
         onOpenPitch={vi.fn()}
         activeTab="map"
         setActiveTab={vi.fn()}

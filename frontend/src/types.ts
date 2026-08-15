@@ -898,3 +898,33 @@ export interface FreeLocation {
   snapped_lng?: number;
   supported_region?: 'BATAM' | 'SINGAPORE' | null;
 }
+
+// ---------------------------------------------------------------------------
+// Authentication
+// ---------------------------------------------------------------------------
+
+/** Supabase credentials held by the browser. Never sent to the CrossFlow API except as a Bearer token. */
+export interface StoredSession {
+  accessToken: string;
+  refreshToken: string;
+  expiresAtMs: number;
+}
+
+/** `/api/auth/status` — whether signing in is possible at all. */
+export interface AuthStatus {
+  mode: string;
+  enabled: boolean;
+  configured: boolean;
+  project_origin: string | null;
+  sign_in: string;
+  notes: string;
+}
+
+/** `/api/auth/session` — the identity the server resolved, not one the client claimed. */
+export interface AuthSession {
+  user_id: string;
+  role: string;
+  display_name: string | null;
+  expires_at: number | null;
+  role_source: string;
+}
