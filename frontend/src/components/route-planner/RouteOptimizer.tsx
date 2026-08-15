@@ -33,7 +33,10 @@ import {
   vehicleProfile,
   type VehicleIconKey,
 } from '../../data/vehicleCatalog';
-import { isRoutePreferenceAvailable } from '../../data/routePreferences';
+import {
+  ROUTE_PREFERENCE_OPTIONS,
+  isRoutePreferenceAvailable,
+} from '../../data/routePreferences';
 
 
 interface RouteOptimizerProps {
@@ -164,6 +167,14 @@ function formatManeuverDistance(distanceM: number): string {
   return `${(distanceM / 1000).toFixed(1)} km`;
 }
 
+const ROUTE_PREFERENCE_ICONS: Record<RoutePreference, LucideIcon> = {
+  BALANCED: Sparkles,
+  FASTEST: Zap,
+  SHORTEST: Route,
+  EASY: ShieldCheck,
+  LOCAL: MapPin,
+};
+
 export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
   locations, originId, setOriginId, destinationId, setDestinationId,
   result, setResult, resultSource, setResultSource,
@@ -188,6 +199,10 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
   const vehicleTriggerRef = useRef<HTMLButtonElement>(null);
   const vehicleMenuRef = useRef<HTMLDivElement>(null);
   const vehicleOptionRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const selectedRoutePreference = ROUTE_PREFERENCE_OPTIONS.find(
+    (option) => option.id === routePreference,
+  ) ?? ROUTE_PREFERENCE_OPTIONS[0];
+  const localRouteAvailable = isRoutePreferenceAvailable('LOCAL', vehicleType);
   const selectedVehicleProfile = vehicleProfile(vehicleType);
   const SelectedVehicleIcon = VEHICLE_ICONS[selectedVehicleProfile.icon];
 
@@ -796,6 +811,64 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
               </div>
             ) : null}
           </div>
+        </fieldset>
+
+
+        <fieldset className="route-preference-fieldset">
+          <legend className="route-planner-fieldset-legend">Route preference</legend>
+          <div className="route-preference-grid">
+            {ROUTE_PREFERENCE_OPTIONS.map((preference) => {
+              const PreferenceIcon = ROUTE_PREFERENCE_ICONS[preference.id];
+              const isSelected = routePreference === preference.id;
+              const isAvailable = isRoutePreferenceAvailable(
+                preference.id,
+                vehicleType,
+              );
+              const unavailableDescriptionId = preference.id === 'LOCAL' && !isAvailable
+                ? 'route-preference-local-unavailable'
+                : undefined;
+              return (
+                <button
+                  key={preference.id}
+                  type="button"
+                  className="ui-button-choice ui-sand-interactive route-preference-option"
+                  aria-pressed={isSelected}
+                  aria-label={`${preference.name}. ${preference.description}`}
+                  aria-describedby={unavailableDescriptionId}
+                  disabled={!isAvailable}
+                  onClick={() => {
+                    if (isSelected || !isAvailable) return;
+                    setRoutePreference(preference.id);
+                    // The solved route answers the previous objective, so it
+                    // must not stay on screen labelled as the new one.
+                    invalidateResult();
+                  }}
+                >
+                  <span className="route-choice-option-heading">
+                    <PreferenceIcon size={ICON_SIZE.medium} aria-hidden="true" />
+                    <strong className="route-choice-option-label">{preference.name}</strong>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          <p
+            id="route-preference-selected-description"
+            className="route-preference-selected-description"
+            role="status"
+            aria-live="polite"
+          >
+            {selectedRoutePreference.description}
+          </p>
+          {!localRouteAvailable ? (
+            <p
+              id="route-preference-local-unavailable"
+              className="route-preference-unavailable-note"
+            >
+              <TriangleAlert size={ICON_SIZE.medium} aria-hidden="true" />
+              Local shortcuts unavailable: {selectedVehicleProfile.label} is too large for unverified narrow-road clearance.
+            </p>
+          ) : null}
         </fieldset>
 
 

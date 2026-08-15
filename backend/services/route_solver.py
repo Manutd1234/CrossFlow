@@ -2,7 +2,7 @@ import copy
 import math
 import os
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from models.congestion_model import (
     LEGACY_CORRIDOR_SPATIAL_DEFAULTS,
@@ -1884,6 +1884,200 @@ def _combined_multi_stop_geometry(
     return combined
 
 
+MAX_MULTI_STOP_ALTERNATIVES = 2
+
+
+def _multi_stop_alternative_journeys(
+    *,
+    legs: List[Dict[str, Any]],
+    ordered: List[Dict[str, Any]],
+    profile: router.VehicleProfile,
+    preference_key: str,
+    weather: int,
+    now: datetime,
+    schedule_verified_at: Optional[str],
+    approved_override_snapshot: Optional[ApprovedGraphOverrideSnapshot],
+    journey_departure: datetime,
+    primary_emissions_kg: float,
+    limit: int = MAX_MULTI_STOP_ALTERNATIVES,
+) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+    """Build whole-journey alternatives by varying the journey's longest leg.
+
+    Solving every leg with alternatives would multiply out: three options
+    across four legs is eighty-one journeys, each leg being a full A* over a
+    115k-node graph. Varying one leg keeps the cost at a single extra
+    alternatives search while still changing the part of the journey where a
+    different path actually moves the total — the longest leg.
+
+    Downstream legs are shifted in time by the swapped leg's delta but are not
+    re-solved, so their congestion remains the figure modelled at the original
+    departure hour. That is stated on each option rather than left implicit,
+    because a shifted arrival implies a re-estimate that did not happen.
+    """
+    road_legs = [
+        index for index, leg in enumerate(legs)
+        # A ferry leg's crossing is a published timetable, not a path choice,
+        # so varying it would imply a routing decision the solver never makes.
+        if leg.get("route_type") != "MULTIMODAL_FERRY_ROUTE"
+        and _is_positive_finite(leg.get("distance_km"))
+    ]
+    if not road_legs:
+        return [], (
+            "Alternative journeys need at least one road leg to vary; this "
+            "journey is composed entirely of published ferry crossings."
+        )
+
+    varied_index = max(road_legs, key=lambda index: legs[index]["distance_km"])
+    start, end = ordered[varied_index], ordered[varied_index + 1]
+    base_leg = legs[varied_index]
+    try:
+        leg_departure = datetime.fromisoformat(base_leg["departure"])
+    except (KeyError, ValueError):
+        leg_departure = journey_departure
+
+    try:
+        varied = optimize_free_route(
+            origin_lat=start["lat"],
+            origin_lng=start["lng"],
+            destination_lat=end["lat"],
+            destination_lng=end["lng"],
+            vehicle_type=profile.key,
+            hour=leg_departure.hour,
+            weather=weather,
+            now=now,
+            origin_name=start["name"],
+            destination_name=end["name"],
+            route_preference=preference_key,
+            schedule_verified_at=schedule_verified_at,
+            approved_override_snapshot=approved_override_snapshot,
+            departure_at=leg_departure,
+        )
+    except (ValueError, RuntimeError):
+        # An alternatives search failing must not fail the journey: the
+        # primary chain is already solved and remains completely usable.
+        return [], (
+            "Alternative journeys were unavailable for this request; the "
+            "primary scheduled chain is unaffected."
+        )
+
+    candidates = varied.get("alternative_routes") or []
+    if not candidates:
+        return [], (
+            "The road engine found no distinct alternative for this "
+            "journey's longest leg, so only the primary chain is offered."
+        )
+
+    options: List[Dict[str, Any]] = []
+    for rank, candidate in enumerate(candidates[:limit], start=1):
+        alt_travel = float(candidate.get("estimated_travel_time_mins") or 0.0)
+        alt_distance = float(candidate.get("distance_km") or 0.0)
+        if alt_travel <= 0 or alt_distance <= 0:
+            continue
+        delta_mins = alt_travel - float(base_leg["estimated_travel_time_mins"])
+        delta_km = alt_distance - float(base_leg["distance_km"])
+        delta_co2 = (
+            float(candidate.get("co2_emissions_kg") or 0.0)
+            - float(base_leg.get("co2_emissions_kg") or 0.0)
+        )
+
+        variant_legs: List[Dict[str, Any]] = []
+        for index, leg in enumerate(legs):
+            clone = dict(leg)
+            if index == varied_index:
+                clone.update({
+                    "distance_km": round(alt_distance, 2),
+                    "estimated_travel_time_mins": round(alt_travel, 1),
+                    "total_eta_mins": round(
+                        alt_travel
+                        + float(leg.get("customs_buffer_mins") or 0.0)
+                        + float(candidate.get("access_time_mins") or 0.0),
+                        1,
+                    ),
+                    "route_geometry": candidate.get("route_geometry", []),
+                    "navigation": candidate.get("navigation"),
+                    "route_data_source": candidate.get("route_data_source"),
+                    "routing_cost_breakdown": candidate.get("routing_cost_breakdown"),
+                    "co2_emissions_kg": float(candidate.get("co2_emissions_kg") or 0.0),
+                    "avoided_congested_zones": candidate.get("avoided_congested_zones", []),
+                    "varied": True,
+                })
+            elif index > varied_index:
+                # Everything after the swap happens later or earlier by the
+                # same delta. Times move; the modelled congestion behind them
+                # does not, which each option declares.
+                clone["schedule_shifted_mins"] = round(delta_mins, 1)
+            variant_legs.append(clone)
+
+        shifted: List[Dict[str, Any]] = []
+        for index, leg in enumerate(variant_legs):
+            clone = dict(leg)
+            if index > varied_index:
+                for field in ("departure", "arrival"):
+                    try:
+                        moment = datetime.fromisoformat(leg[field])
+                    except (KeyError, ValueError):
+                        continue
+                    clone[field] = clock.iso(
+                        moment + timedelta(minutes=delta_mins),
+                    )
+            elif index == varied_index:
+                try:
+                    clone["arrival"] = clock.iso(
+                        datetime.fromisoformat(leg["arrival"])
+                        + timedelta(minutes=delta_mins),
+                    )
+                except (KeyError, ValueError):
+                    pass
+            shifted.append(clone)
+
+        total_distance = sum(float(leg["distance_km"]) for leg in shifted)
+        total_eta = sum(
+            float(leg.get("total_eta_mins") or 0.0)
+            + float(leg.get("dwell_mins") or 0.0)
+            for leg in shifted
+        )
+        emissions = round(primary_emissions_kg + delta_co2, 2)
+        options.append({
+            "id": f"multi-stop-alternative-{rank}",
+            "name": f"Alternative journey {rank}",
+            "description": (
+                "Same stops in the same order, taking a different road path "
+                f"between {start['name']} and {end['name']}."
+            ),
+            "route_geometry": _combined_multi_stop_geometry(shifted),
+            "distance_km": round(total_distance, 2),
+            "estimated_travel_time_mins": round(
+                sum(float(leg["estimated_travel_time_mins"]) for leg in shifted), 1,
+            ),
+            "total_eta_mins": round(total_eta, 1),
+            "co2_emissions_kg": emissions,
+            "co2_saved_kg": round(max(0.0, primary_emissions_kg - emissions), 2),
+            "navigation": candidate.get("navigation"),
+            "route_data_source": candidate.get("route_data_source"),
+            "route_preference": preference_key,
+            "vehicle_profile": router.vehicle_profile_payload(profile),
+            "legs": shifted,
+            "varied_leg_index": varied_index,
+            "varied_leg_name": f"{start['name']} → {end['name']}",
+            "distance_delta_km": round(delta_km, 2),
+            "duration_delta_mins": round(delta_mins, 1),
+            "overlap_ratio": candidate.get("overlap_ratio"),
+            "limitations": (
+                "Only the varied leg was re-solved. Later legs keep the "
+                "congestion modelled at their original departure time even "
+                "though this option shifts them by "
+                f"{round(delta_mins, 1)} minutes."
+            ),
+        })
+
+    if not options:
+        return [], (
+            "The road engine found no distinct alternative for this "
+            "journey's longest leg, so only the primary chain is offered."
+        )
+    return options, None
+
+
 def optimize_multi_stop_route(
     stops: Any,
     vehicle_type: str,
@@ -2044,6 +2238,23 @@ def optimize_multi_stop_route(
         if source and source not in leg_sources:
             leg_sources.append(str(source))
 
+    # Whole-journey alternatives, computed once the primary chain exists so a
+    # failure here can never cost the caller the route they asked for.
+    multi_stop_alternatives, multi_stop_alternatives_note = (
+        _multi_stop_alternative_journeys(
+            legs=legs,
+            ordered=ordered,
+            profile=profile,
+            preference_key=preference.key,
+            weather=weather,
+            now=now,
+            schedule_verified_at=schedule_verified_at,
+            approved_override_snapshot=approved_override_snapshot,
+            journey_departure=journey_departure,
+            primary_emissions_kg=total_emissions_kg,
+        )
+    )
+
     final_stop = ordered[-1]
     result: Dict[str, Any] = {
         "route_type": (
@@ -2130,11 +2341,8 @@ def optimize_multi_stop_route(
                 "departs."
             ),
         },
-        "alternative_routes": [],
-        "alternatives_note": (
-            "Alternative paths are offered for two-point routes only; a "
-            "multi-stop journey is reported as the scheduled chain of legs."
-        ),
+        "alternative_routes": multi_stop_alternatives,
+        "alternatives_note": multi_stop_alternatives_note,
         "limitations": (
             "Leg times come from the same modelled congestion used by the "
             "two-point solver. Dwell times are the caller's own inputs and are "
