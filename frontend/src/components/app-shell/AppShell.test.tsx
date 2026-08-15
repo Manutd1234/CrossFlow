@@ -150,8 +150,9 @@ describe('application shell DOM', () => {
       container.querySelector('.workspace-subtabs__rail')?.classList ?? [],
     )).toEqual(['workspace-subtabs__rail']);
     expect(planner?.querySelectorAll('form')).toHaveLength(0);
-    // Endpoints, vehicle, route preference, weather & time.
-    expect(planner?.querySelectorAll('fieldset')).toHaveLength(4);
+    // Endpoints, vehicle, and weather & time. Route preference is intentionally
+    // fixed rather than exposed in the admin side panel.
+    expect(planner?.querySelectorAll('fieldset')).toHaveLength(3);
     const submitButton = planner?.querySelector('button[type="submit"]');
     expect(submitButton?.textContent).toContain('Plan Journey');
     expect(submitButton?.classList.contains('ui-button-primary')).toBe(true);

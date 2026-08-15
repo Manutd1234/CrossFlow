@@ -84,16 +84,10 @@ describe('vehicle profile selection', () => {
       .toContain('bus lanes are not modelled');
   });
 
-  it('offers route preferences and adds intermediate location fields', () => {
+  it('hides route preferences and adds intermediate location fields', () => {
     const container = renderIntoDom(<VehicleHarness />);
-    // All five audited objectives stay selectable: the solver honours each of
-    // them, so hiding the control would strand a documented capability.
-    const preferences = Array.from(
-      container.querySelectorAll('.route-preference-option'),
-    ).map((option) => option.textContent);
-    expect(preferences).toHaveLength(5);
-    expect(preferences.join(' ')).toContain('Balanced');
-    expect(preferences.join(' ')).toContain('Local');
+    expect(container.querySelector('.route-preference-fieldset')).toBeNull();
+    expect(container.textContent).not.toContain('Route preference');
 
     const swap = container.querySelector<HTMLButtonElement>('.route-swap-button');
     const add = container.querySelector<HTMLButtonElement>('.route-add-stop-button');
