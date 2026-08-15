@@ -36,7 +36,7 @@ const API_ENABLED = import.meta.env.VITE_API_ENABLED !== 'false';
 
 
 const CORRIDOR_TIMEOUT_MS = 6000;
-const ROUTE_TIMEOUT_MS = 15000;
+const ROUTE_TIMEOUT_MS = 60_000;
 const FERRY_REFRESH_TIMEOUT_MS = 20_000;
 const FERRY_TERMINAL_MATCH_KM = 0.5;
 
@@ -50,6 +50,10 @@ function scheduleRequestFields(schedule?: RouteScheduleOptions): RouteScheduleOp
   if (departureAt) return { departure_at: departureAt };
   if (arriveBy) return { arrive_by: arriveBy };
   return {};
+}
+
+function hasExactSchedule(schedule?: RouteScheduleOptions): boolean {
+  return Boolean(schedule?.departure_at?.trim() || schedule?.arrive_by?.trim());
 }
 
 function hourFromSchedule(schedule?: RouteScheduleOptions): number | undefined {
@@ -674,6 +678,25 @@ export async function requestRouteOptimization(
     ? (CORRIDOR_INDEX[seededCorridor.id] ?? 0)
     : Math.abs(Math.round((origin.lat * 1000) + (origin.lng * 100))) % 5;
   const effectiveHour = hourFromSchedule(schedule) ?? hour;
+  const requestBody = JSON.stringify({
+    origin_id: originId, destination_id: destinationId,
+    vehicle_type: vehicleType, hour: effectiveHour, weather,
+    route_preference: routePreference, ...scheduleRequestFields(schedule),
+  });
+  const exactSchedule = hasExactSchedule(schedule);
+  if (exactSchedule) {
+    const scheduledPayload = await getJSON<Envelope & RouteOptimizationResult>(
+      '/api/optimize-route',
+      ROUTE_TIMEOUT_MS,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: requestBody,
+      },
+      true,
+    ).then(validatedRoadPayload);
+    if (scheduledPayload) return wrap(scheduledPayload, scheduledPayload);
+  }
   const roadHedge = bundledRoadHedge(
     [origin.lat, origin.lng],
     [destination.lat, destination.lng],
@@ -682,18 +705,14 @@ export async function requestRouteOptimization(
   );
   const backendAbort = new AbortController();
   const sources = await raceRoadRouteSources(
-    getJSON<Envelope & RouteOptimizationResult>(
+    exactSchedule ? Promise.resolve(null) : getJSON<Envelope & RouteOptimizationResult>(
       '/api/optimize-route',
       ROUTE_TIMEOUT_MS,
       {
         method: 'POST',
         signal: backendAbort.signal,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          origin_id: originId, destination_id: destinationId,
-          vehicle_type: vehicleType, hour: effectiveHour, weather,
-          route_preference: routePreference, ...scheduleRequestFields(schedule),
-        }),
+        body: requestBody,
       },
       true,
     ).then(validatedRoadPayload),
@@ -1445,6 +1464,21 @@ export async function requestFreeRouteOptimization(
     ), schedule));
   }
 
+  const exactSchedule = hasExactSchedule(schedule);
+  if (exactSchedule) {
+    const scheduledPayload = await getJSON<Envelope & RouteOptimizationResult>(
+      '/api/optimize-free-route',
+      ROUTE_TIMEOUT_MS,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: requestBody,
+      },
+      true,
+    ).then(validatedRoadPayload);
+    if (scheduledPayload) return wrap(scheduledPayload, scheduledPayload);
+  }
+
   const roadHedge = bundledRoadHedge(
     [origin.lat, origin.lng],
     [destination.lat, destination.lng],
@@ -1453,7 +1487,7 @@ export async function requestFreeRouteOptimization(
   );
   const backendAbort = new AbortController();
   const sources = await raceRoadRouteSources(
-    getJSON<Envelope & RouteOptimizationResult>(
+    exactSchedule ? Promise.resolve(null) : getJSON<Envelope & RouteOptimizationResult>(
       '/api/optimize-free-route',
       ROUTE_TIMEOUT_MS,
       {

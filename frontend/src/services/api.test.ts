@@ -409,11 +409,20 @@ describe('free-route API fallback', () => {
     expect(response.data.route_data_source).toBe('bundled_client_openstreetmap');
   });
 
-  it('keeps exact departure planning in bundled simulation when the backend hedge is aborted', async () => {
+  it('does not let the browser hedge abort an exact-time backend route', async () => {
     vi.useFakeTimers();
-    vi.stubGlobal('fetch', vi.fn().mockImplementation(() => new Promise<Response>(() => undefined)));
-    planBundledRoute.mockResolvedValue(bundledPlan);
     const departureAt = '2026-08-20T09:30:00+07:00';
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(() => new Promise<Response>((resolve) => {
+      setTimeout(() => resolve(new Response(JSON.stringify({
+        ...liveApiRoute,
+        planned_departure: departureAt,
+        scheduling: {
+          mode: 'DEPART_AT',
+          requested_departure_at: departureAt,
+        },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } })), 5_000);
+    })));
+    planBundledRoute.mockResolvedValue(bundledPlan);
 
     const pendingResponse = requestFreeRouteOptimization(
       origin,
@@ -425,20 +434,17 @@ describe('free-route API fallback', () => {
       { departure_at: departureAt },
     );
     await vi.advanceTimersByTimeAsync(1_200);
+    expect(planBundledRoute).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(3_800);
 
     const response = await pendingResponse;
-    expect(response.source).toBe('offline');
+    expect(response.source).toBe('live');
     expect(response.data.planned_departure).toBe(departureAt);
     expect(response.data.scheduling).toMatchObject({
       mode: 'DEPART_AT',
       requested_departure_at: departureAt,
     });
-    expect(response.data.schedule_provenance).toMatchObject({
-      source: 'committed_timetable_simulation',
-      freshness_durability: 'committed_browser_snapshot',
-      shared_freshness: false,
-      live: false,
-    });
+    expect(planBundledRoute).not.toHaveBeenCalled();
   });
 
   it('uses the bundled road graph with navigation and genuine alternatives when the API is offline', async () => {
