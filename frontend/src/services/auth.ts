@@ -39,6 +39,31 @@ export function supabaseConfigured(): boolean {
   return SUPABASE_URL.length > 0 && SUPABASE_KEY.length > 0;
 }
 
+/** The Supabase project this build authenticates against. */
+export function configuredProjectOrigin(): string {
+  return SUPABASE_URL;
+}
+
+/**
+ * Detect the browser and the API authenticating against different projects.
+ *
+ * This is worth its own check because the symptom is so misleading: sign-in
+ * succeeds, Supabase issues a perfectly valid token, and then every API call
+ * returns a bare 401 because the server is validating it against a different
+ * project's keys. Nothing in that sequence points at the real cause.
+ */
+export function projectMismatch(status: AuthStatus | null): string | null {
+  const serverOrigin = status?.project_origin?.trim().replace(/\/$/, '');
+  if (!serverOrigin || !SUPABASE_URL) return null;
+  if (serverOrigin === SUPABASE_URL) return null;
+  return (
+    `This build signs in to ${SUPABASE_URL}, but the API validates tokens `
+    + `against ${serverOrigin}. A token from one project is never valid for `
+    + 'the other, so sign-in would fail with an unexplained 401. Point '
+    + 'VITE_SUPABASE_URL and the server\'s SUPABASE_URL at the same project.'
+  );
+}
+
 async function supabaseFetch(
   path: string,
   body: Record<string, unknown>,

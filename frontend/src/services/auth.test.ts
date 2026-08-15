@@ -13,9 +13,9 @@ vi.stubEnv('VITE_SUPABASE_URL', SUPABASE_URL);
 vi.stubEnv('VITE_SUPABASE_PUBLISHABLE_KEY', PUBLISHABLE_KEY);
 
 const {
-  AuthError, completeOAuthRedirect, fetchSession, readStoredSession,
-  refreshSession, signIn, signInWithGitHub, signOut, supabaseConfigured,
-  validSession,
+  AuthError, completeOAuthRedirect, fetchSession, projectMismatch,
+  readStoredSession, refreshSession, signIn, signInWithGitHub, signOut,
+  supabaseConfigured, validSession,
 } = await import('./auth');
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
@@ -260,5 +260,34 @@ describe('github oauth', () => {
     const { replaceState } = stubLocation('');
     expect(completeOAuthRedirect()).toBeNull();
     expect(replaceState).not.toHaveBeenCalled();
+  });
+});
+
+describe('project mismatch guard', () => {
+  const status = (origin: string | null) => ({
+    mode: 'supabase', enabled: true, configured: true,
+    project_origin: origin, sign_in: 'supabase_auth_direct', notes: '',
+  });
+
+  it('stays silent when both halves target the same project', () => {
+    expect(projectMismatch(status(SUPABASE_URL))).toBeNull();
+  });
+
+  it('tolerates a trailing slash on the server origin', () => {
+    expect(projectMismatch(status(`${SUPABASE_URL}/`))).toBeNull();
+  });
+
+  it('names both projects when they differ', () => {
+    // The real symptom is a bare 401 after an apparently successful sign-in,
+    // which points nowhere near the actual cause.
+    const message = projectMismatch(status('https://otherprojectref000.supabase.co'));
+    expect(message).toContain(SUPABASE_URL);
+    expect(message).toContain('https://otherprojectref000.supabase.co');
+    expect(message).toContain('VITE_SUPABASE_URL');
+  });
+
+  it('says nothing when the server has not reported an origin', () => {
+    expect(projectMismatch(status(null))).toBeNull();
+    expect(projectMismatch(null)).toBeNull();
   });
 });

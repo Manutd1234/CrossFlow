@@ -5,6 +5,7 @@ import type { AuthSession, AuthStatus, StoredSession } from '../../types';
 import {
   AuthError,
   fetchSession,
+  projectMismatch,
   signIn,
   signInWithGitHub,
   signOut,
@@ -75,7 +76,7 @@ export function SignInPanel({
       ? 'Sign-in is turned off on this server (CROSSFLOW_AUTH_MODE is not "supabase").'
       : status && !status.configured
         ? 'The server cannot reach Supabase, so sign-in is unavailable right now.'
-        : null;
+        : projectMismatch(status);
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
