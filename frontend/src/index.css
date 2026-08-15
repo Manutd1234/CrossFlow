@@ -5258,6 +5258,65 @@ a:focus-visible {
   scrollbar-gutter: stable;
 }
 
+.route-code-lookup {
+  gap: 16px;
+  overflow: visible;
+}
+
+.route-code-lookup__heading {
+  display: grid;
+  gap: 8px;
+}
+
+.route-code-lookup__title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.route-code-lookup__title-row > svg {
+  flex: 0 0 auto;
+  color: var(--accent-cyan);
+}
+
+.route-code-lookup__heading h3,
+.route-code-lookup__heading p {
+  margin: 0;
+}
+
+.route-code-lookup__heading p {
+  color: var(--text-secondary);
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+.route-code-lookup__field {
+  display: grid;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.route-code-lookup__field input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 12px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+  color: var(--text-primary);
+  font: 700 1.05rem/1.2 var(--font-mono, monospace);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.route-code-lookup__field input:focus {
+  border-color: var(--accent-cyan);
+  outline: 2px solid color-mix(in srgb, var(--accent-cyan) 22%, transparent);
+  outline-offset: 2px;
+}
+
 .route-planner-layout .route-result-tabs {
   display: flex;
   flex: 1;

@@ -101,6 +101,23 @@ describe('application shell DOM', () => {
     expect(container.querySelector('button[aria-haspopup="dialog"]')).toBeNull();
   });
 
+  it('limits driver navigation to congestion and route', () => {
+    const container = renderIntoDom(
+      <Navigation
+        activeTab="map"
+        setActiveTab={vi.fn()}
+        allowedTabs={['map', 'route']}
+      />,
+    );
+
+    const labels = Array.from(container.querySelectorAll('[role="tab"]'))
+      .map((tab) => tab.textContent);
+    expect(labels).toHaveLength(2);
+    expect(labels.join(' ')).toContain('Congestion');
+    expect(labels.join(' ')).toContain('Route');
+    expect(labels.join(' ')).not.toContain('Analytics');
+  });
+
   it('renders a single semantic route form with labelled controls and an empty state', () => {
     const container = renderIntoDom(
       <RouteOptimizer
@@ -150,5 +167,36 @@ describe('application shell DOM', () => {
     );
     expect(modeButtons).toHaveLength(2);
     expect(modeButtons.every(button => button.type === 'button')).toBe(true);
+  });
+
+  it('replaces planning controls with route-code lookup for drivers', () => {
+    const container = renderIntoDom(
+      <RouteOptimizer
+        locations={ROUTE_LOCATIONS}
+        originId="mukakuning"
+        setOriginId={vi.fn()}
+        destinationId="batam_centre"
+        setDestinationId={vi.fn()}
+        result={null}
+        setResult={vi.fn()}
+        resultSource="simulated"
+        setResultSource={vi.fn()}
+        vehicleType="COMMUTER"
+        setVehicleType={vi.fn()}
+        routePreference="BALANCED"
+        setRoutePreference={vi.fn()}
+        weather={0}
+        setWeather={vi.fn()}
+        hour={14}
+        setHour={vi.fn()}
+        driverAccess
+      />,
+    );
+
+    const lookup = container.querySelector('form[aria-label="Assigned route lookup"]');
+    expect(lookup?.querySelector('#driver-route-code')).not.toBeNull();
+    expect(lookup?.querySelectorAll('fieldset')).toHaveLength(0);
+    expect(lookup?.querySelector('button[type="submit"]')?.textContent).toContain('Load Route');
+    expect(container.querySelector('.workspace-subtabs__rail')).toBeNull();
   });
 });

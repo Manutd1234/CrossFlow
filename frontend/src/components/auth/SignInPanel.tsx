@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { LogIn, LogOut, ShieldCheck, TriangleAlert, UserRound } from 'lucide-react';
+import { CarFront, LogIn, LogOut, ShieldCheck, TriangleAlert, UserRound } from 'lucide-react';
 import { ICON_SIZE } from '../../theme/iconSizes';
 import type { AuthSession, AuthStatus, StoredSession } from '../../types';
 import {
@@ -162,7 +162,7 @@ export function SignInPanel({
         aria-labelledby="signin-title"
       >
         {isGate ? (
-          <p className="signin-gate__brand">CrossFlow AI · Batam–Singapore mobility</p>
+          <p className="signin-gate__brand">CrossFlow · Batam–Singapore mobility</p>
         ) : null}
         <h2 id="signin-title" className="signin-panel__title">
           <ShieldCheck aria-hidden="true" size={ICON_SIZE.large} color="var(--accent-cyan)" />
@@ -216,18 +216,16 @@ export function SignInPanel({
             <p className="signin-panel__error" role="status">
               <TriangleAlert aria-hidden="true" size={ICON_SIZE.medium} /> {unavailableReason}
             </p>
-            {/* Never strand the user behind a sign-in that cannot succeed.
-                The corridor, ferry and analytics views do not require an
-                account, so a misconfigured or unreachable Supabase must not
-                blank the whole product. */}
+            {/* Driver mode remains available when operator sign-in is down. */}
             {isGate ? (
               <div className="signin-panel__actions">
                 <button
                   type="button"
-                  className="ui-button-primary"
+                  className="signin-panel__secondary signin-panel__driver-button"
                   onClick={onContinueAsGuest}
                 >
-                  Continue to CrossFlow
+                  <CarFront aria-hidden="true" size={ICON_SIZE.medium} />
+                  Continue as Driver
                 </button>
               </div>
             ) : null}
@@ -272,17 +270,18 @@ export function SignInPanel({
             ) : null}
 
             <div className="signin-panel__actions">
-              <button type="submit" className="ui-button-primary" disabled={busy}>
-                <LogIn aria-hidden="true" size={ICON_SIZE.medium} />
-                {busy ? 'Signing in…' : 'Sign in'}
-              </button>
               <button
                 type="button"
-                className="signin-panel__secondary"
+                className="signin-panel__secondary signin-panel__driver-button"
                 onClick={isGate ? onContinueAsGuest : onClose}
                 disabled={busy}
               >
-                {isGate ? 'Continue as guest' : 'Cancel'}
+                <CarFront aria-hidden="true" size={ICON_SIZE.medium} />
+                {isGate ? 'Continue as Driver' : 'Cancel'}
+              </button>
+              <button type="submit" className="ui-button-primary" disabled={busy}>
+                <LogIn aria-hidden="true" size={ICON_SIZE.medium} />
+                {busy ? 'Signing in…' : 'Sign in'}
               </button>
             </div>
 

@@ -689,6 +689,42 @@ export async function requestRouteOptimization(
     routePreference,
   ));
 }
+
+/** Retrieve the immutable route assigned to a driver by its seven-character code. */
+export async function requestPersistedRoute(
+  routeCode: string,
+  accessToken: string | null,
+): Promise<Fetched<RouteOptimizationResult>> {
+  const normalizedCode = routeCode.trim().toUpperCase();
+  if (!/^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{7}$/.test(normalizedCode)) {
+    throw new ApiRequestError('Enter the seven-character route code supplied by dispatch.', 400);
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}/api/routes/${normalizedCode}`, {
+      signal: AbortSignal.timeout(ROUTE_TIMEOUT_MS),
+      headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
+    });
+  } catch {
+    throw new ApiRequestError('The assigned route could not be reached. Try again.', 503);
+  }
+  if (!response.ok) {
+    let detail = response.status === 404
+      ? 'No assigned route matches that code.'
+      : 'Your account is not authorized to retrieve this assigned route.';
+    try {
+      const body = await response.json() as { detail?: unknown };
+      if (typeof body.detail === 'string' && body.detail.trim()) detail = body.detail;
+    } catch {
+      // Keep the status-specific message for non-JSON responses.
+    }
+    throw new ApiRequestError(detail, response.status);
+  }
+  const payload = validatedRoadPayload(await response.json() as RouteOptimizationResult);
+  if (!payload) throw new ApiRequestError('The assigned route response is incomplete.', 503);
+  return wrap(payload as RouteOptimizationResult & Envelope, payload);
+}
 const FERRY_BOARDING_CUTOFF_MINS = 15;
 
 function browserRoutingContext(
