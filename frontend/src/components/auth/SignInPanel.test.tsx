@@ -114,7 +114,7 @@ describe('test admin access', () => {
 });
 
 describe('signed-in account panel', () => {
-  it('shows the server-resolved role with a right-aligned primary sign-out action', () => {
+  it('shows the role the server resolved, with a right-aligned primary sign-out action', () => {
     const container = document.createElement('div');
     document.body.append(container);
     root = createRoot(container);
@@ -136,8 +136,14 @@ describe('signed-in account panel', () => {
       />,
     ));
 
+    // This identity is a driver, so the badge must say driver. Labelling every
+    // signed-in user an admin would tell them they hold access the API will
+    // then refuse, and the role is only meaningful because the server read it
+    // from crossflow_profiles rather than trusting the client.
     expect(container.querySelector('.signin-role')?.textContent).toContain('driver');
+    expect(container.querySelector('.signin-role')?.textContent).not.toContain('Admin');
     expect(container.textContent).toContain('Role resolved by the server');
+    expect(container.textContent).toContain('crossflow_profiles');
     expect(container.textContent).not.toContain('Re-check role');
 
     const signOut = Array.from(container.querySelectorAll('button'))

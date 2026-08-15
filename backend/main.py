@@ -1,8 +1,10 @@
+import logging
 import os
 import secrets
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
@@ -20,6 +22,7 @@ from fastapi import FastAPI, Header, HTTPException, Path, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from auth import identity
 from auth.routes import router as auth_router
 from models.congestion_model import forecaster
 from services import clock, ferry_freshness_store, ferry_refresh, ferry_schedule, router
@@ -64,8 +67,45 @@ _SHORTCUT_POLICY_ERROR: Optional[str] = None
 _SHORTCUT_GRAPH_INDEX: Optional[shortcut_ingestion.GraphIndex] = None
 _ROUTE_STORE = route_store.DEFAULT_ROUTE_STORE
 
-app = FastAPI(
+_LOGGER = logging.getLogger(__name__)
 
+# Set to "0" for a serverless deployment, where a background thread cannot
+# outlive the invocation that started it and would only steal its CPU.
+_WARM_ROUTING_CACHES = os.environ.get("CROSSFLOW_WARM_ROUTING_CACHES", "1") == "1"
+
+
+@asynccontextmanager
+async def _lifespan(_app: "FastAPI"):
+    """Build the per-vehicle routing caches before the first request needs them.
+
+    Cold, a single route request spends ten-plus seconds building this profile's
+    edge features and reachable core, which outlasts the browser's own request
+    timeout: the route arrives correctly but far too late to be rendered. The
+    build is pure CPU over the committed graph, so doing it on a daemon thread
+    keeps startup instant and lets early requests fall back to building their
+    own profile as before.
+    """
+    if _WARM_ROUTING_CACHES:
+        def _warm() -> None:
+            # Resolve the snapshot exactly as the route handlers do; it is part
+            # of both cache keys, so warming any other value warms nothing.
+            approved_snapshot, _ = _approved_override_snapshot_for_route()
+            warmed = router.warm_profile_caches(
+                approved_override_snapshot=approved_snapshot,
+            )
+            _LOGGER.info(
+                "[warmup] %d routing profiles ready in %.1fs",
+                len(warmed), sum(warmed.values()),
+            )
+
+        threading.Thread(
+            target=_warm, name="crossflow-routing-warmup", daemon=True,
+        ).start()
+    yield
+
+
+app = FastAPI(
+    lifespan=_lifespan,
     title="CrossFlow AI API",
     description=(
         "Smart mobility and cross-border logistics API for the Batam-Singapore "
@@ -91,6 +131,8 @@ app.add_middleware(
 # routing endpoint below stays public and unauthenticated: auth is a per-route
 # dependency, never middleware, so an unreachable Supabase cannot blank the app.
 app.include_router(auth_router)
+
+
 
 
 VehicleType = Literal[
@@ -1286,15 +1328,17 @@ def api_get_route(
         pattern=r"^(?:[0-9a-f]{64}|[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{7})$",
     ),
     response: Response = None,
+    authorization: Optional[str] = Header(default=None),
     x_crossflow_route_token: Optional[str] = Header(default=None),
     x_crossflow_admin_token: Optional[str] = Header(default=None),
 ):
     """Retrieve a persisted route for an authorized driver or operator.
 
-    A deployment-scoped route-read token is supported for driver clients. The
-    existing admin token remains a compatibility path until user/session
-    authentication is connected. A route ID is content-addressed, not access
-    control by itself. The path accepts either the full 64-character
+    Any signed-in CrossFlow account may load a route it has the code for, which
+    is the path the driver UI uses. The deployment-scoped route-read token
+    remains for machine clients that hold no user session, and the shared admin
+    token remains as a compatibility path. A route ID is content-addressed, not
+    access control by itself. The path accepts either the full 64-character
     ``route_id`` or its seven-character ``route_code`` alias and returns the
     persisted route envelope with ``estimated_arrival``, ``scheduling``, and
     route identifiers.
@@ -1305,7 +1349,12 @@ def api_get_route(
         and x_crossflow_route_token
         and secrets.compare_digest(x_crossflow_route_token, expected_reader)
     )
-    if not reader_ok:
+    if not reader_ok and identity.auth_enabled() and authorization:
+        # Verified against Supabase with the caller's own token, so a forged
+        # bearer cannot mint access. Any role suffices: dispatch hands drivers
+        # the code precisely so they can load the route assigned to them.
+        identity.require_user(authorization)
+    elif not reader_ok:
         _require_admin(
             x_crossflow_admin_token,
             detail=(

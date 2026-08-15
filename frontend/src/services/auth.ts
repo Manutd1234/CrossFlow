@@ -50,11 +50,6 @@ export function testAdminConfigured(): boolean {
   return TEST_ADMIN_EMAIL.length > 0 && TEST_ADMIN_PASSWORD.length > 0;
 }
 
-/** The Supabase project this build authenticates against. */
-export function configuredProjectOrigin(): string {
-  return SUPABASE_URL;
-}
-
 /**
  * Detect the browser and the API authenticating against different projects.
  *

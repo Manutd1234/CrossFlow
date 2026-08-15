@@ -35,7 +35,11 @@ const API_BASE = configuredApiBase ?? '';
 const API_ENABLED = import.meta.env.VITE_API_ENABLED !== 'false';
 
 
-const CORRIDOR_TIMEOUT_MS = 6000;
+// A cold worker builds its per-vehicle routing caches inside the first request
+// that needs them. Measured cold on this graph: ~15s for corridors and ~17s for
+// a route, so the previous 6s corridor budget abandoned a response that was
+// about to arrive and reported the backend as unavailable.
+const CORRIDOR_TIMEOUT_MS = 20_000;
 const ROUTE_TIMEOUT_MS = 60_000;
 const FERRY_REFRESH_TIMEOUT_MS = 20_000;
 const FERRY_TERMINAL_MATCH_KM = 0.5;
@@ -746,11 +750,21 @@ export async function requestPersistedRoute(
     throw new ApiRequestError('Enter the seven-character route code supplied by dispatch.', 400);
   }
 
+  // Drivers reach this panel as guests, so there is no session token to send.
+  // The deployment-scoped read token is the mechanism the API documents for
+  // exactly that client. Vite embeds it in the public bundle, so it is only a
+  // per-deployment gate, never a per-account one: leave it unset and drivers
+  // must sign in instead.
+  const headers: Record<string, string> = {};
+  if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+  const routeReadToken = import.meta.env.VITE_ROUTE_READ_TOKEN?.trim();
+  if (routeReadToken) headers['X-Crossflow-Route-Token'] = routeReadToken;
+
   let response: Response;
   try {
     response = await fetch(`${API_BASE}/api/routes/${normalizedCode}`, {
       signal: AbortSignal.timeout(ROUTE_TIMEOUT_MS),
-      headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
+      headers,
     });
   } catch {
     throw new ApiRequestError('The assigned route could not be reached. Try again.', 503);

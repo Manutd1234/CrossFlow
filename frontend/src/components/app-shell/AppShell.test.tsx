@@ -133,6 +133,7 @@ describe('application shell DOM', () => {
         vehicleType="COMMUTER"
         setVehicleType={vi.fn()}
         routePreference="BALANCED"
+        setRoutePreference={vi.fn()}
         weather={0}
         setWeather={vi.fn()}
         hour={14}
@@ -151,7 +152,8 @@ describe('application shell DOM', () => {
     expect(planner?.querySelectorAll('form')).toHaveLength(0);
     // Endpoints, vehicle, and weather & time. Route preference is intentionally
     // fixed rather than exposed in the admin side panel.
-    expect(planner?.querySelectorAll('fieldset')).toHaveLength(3);
+    // Endpoints, vehicle, route preference, weather & time.
+    expect(planner?.querySelectorAll('fieldset')).toHaveLength(4);
     const submitButton = planner?.querySelector('button[type="submit"]');
     expect(submitButton?.textContent).toContain('Plan Journey');
     expect(submitButton?.classList.contains('ui-button-primary')).toBe(true);
@@ -185,6 +187,7 @@ describe('application shell DOM', () => {
         vehicleType="COMMUTER"
         setVehicleType={vi.fn()}
         routePreference="BALANCED"
+        setRoutePreference={vi.fn()}
         weather={0}
         setWeather={vi.fn()}
         hour={14}

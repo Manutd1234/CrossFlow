@@ -14,6 +14,7 @@ import contextvars
 import hashlib
 import heapq
 import json
+import logging
 import math
 import os
 import re
@@ -36,6 +37,8 @@ from services.service_contracts import ApprovedGraphOverrideSnapshot
 
 
 route_learning_store = DEFAULT_ROUTE_LEARNING_STORE
+
+_LOGGER = logging.getLogger(__name__)
 
 _GRAPH_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -1210,6 +1213,35 @@ def _clear_routing_view_cache() -> None:
 _main_routing_core.cache_clear = _clear_routing_view_cache  # type: ignore[attr-defined]
 _main_routing_core.cache_info = _routing_view.cache_info  # type: ignore[attr-defined]
 _main_routing_core.cache_parameters = _routing_view.cache_parameters  # type: ignore[attr-defined]
+
+
+def warm_profile_caches(
+    vehicle_types: Optional[Sequence[str]] = None,
+    approved_override_snapshot: Optional[ApprovedGraphOverrideSnapshot] = None,
+) -> Dict[str, float]:
+    """Build the per-profile edge features and routing core ahead of traffic.
+
+    Both caches are keyed by vehicle type, so the first request for a profile
+    otherwise pays the whole build inside its own response — long enough that
+    the browser abandons the request and reports the backend as unavailable.
+    Building them up front moves that cost off the request path entirely.
+
+    ``approved_override_snapshot`` must be the same snapshot the route handlers
+    resolve. It is part of both cache keys, and an empty snapshot is a distinct
+    key from ``None``, so warming the wrong one leaves every request as cold as
+    it was before.
+    """
+    warmed: Dict[str, float] = {}
+    for vehicle_type in vehicle_types or tuple(VEHICLE_PROFILES):
+        started = monotonic()
+        try:
+            _static_edge_features(vehicle_type, approved_override_snapshot)
+            _routing_view(vehicle_type, approved_override_snapshot)
+        except Exception:  # noqa: BLE001 - warming must never break startup
+            _LOGGER.exception("[warmup] %s failed to warm", vehicle_type)
+            continue
+        warmed[vehicle_type] = monotonic() - started
+    return warmed
 
 
 @lru_cache(maxsize=16)

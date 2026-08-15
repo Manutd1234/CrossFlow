@@ -160,6 +160,10 @@ export function SignInPanel({
                 </span>
               </dd>
             </dl>
+            {/* Naming the source matters: the badge is only trustworthy
+                because the server read it from the database with the caller's
+                own token. A hardcoded label would tell a driver they are an
+                admin, which the API would then refuse to honour. */}
             <p className="signin-panel__note">
               Role resolved by the server from <code>{identity.role_source}</code>, not from the
               access token.
