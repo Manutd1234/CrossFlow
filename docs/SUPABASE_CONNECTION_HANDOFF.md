@@ -229,13 +229,18 @@ Vercel deploy:
 tzdata; platform_system == "Windows"
 ```
 
-**Two pre-existing test failures, unconfirmed.** `backend/test_backend.py`
-reports 144/146, failing `test_history_current_seed_fills_missing_corridor_without_replacing_others`
-and `test_history_seed_migration_replaces_only_obsolete_synthetic_rows`. Both
-are in SQLite congestion-history seeding, which the auth work never touches, so
-they are almost certainly pre-existing — but that was **not verified against a
-clean checkout**. Worth confirming with `git stash` and a re-run before blaming
-anything else. The suite takes ~40 minutes and buffers all output to the end.
+**Two Windows-only test failures — diagnosed and fixed on this branch.**
+`backend/test_backend.py` used to report 144/146 on Windows while CI reported a
+clean suite. The cause was in the tests, not the product: both opened a database
+with `with sqlite3.connect(path) as conn`, and sqlite3's context manager commits
+the transaction but **does not close the connection**. Windows then refuses to
+delete the still-open file, so `TemporaryDirectory` cleanup raised
+`PermissionError` and the tests were recorded as failed — after their assertions
+had already passed. Fixed with `contextlib.closing` in the second commit on this
+branch. Worth knowing because the same pattern is easy to reintroduce.
+
+Note the suite takes ~40 minutes and buffers all output until the end, so a run
+that appears hung is usually just working.
 
 **`transport.py` duplicates ~90 lines** of hardened request logic from
 `services/supabase_server.py` (timeout controller, redirect refusal, response
@@ -277,7 +282,8 @@ what the delivery tables need to support.
 .venv\Scripts\python.exe backend\test_backend.py
 ```
 
-Current state on this branch: 25/25 auth, 105/105 modular, 144/146 full suite.
+Current state on this branch: 25/25 auth, 105/105 modular. The two previously
+failing history tests now pass individually on Windows; see §8.
 
 ---
 
