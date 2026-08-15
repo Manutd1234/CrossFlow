@@ -170,14 +170,7 @@ export const MapView: React.FC<MapViewProps> = ({
     document.getElementById('map-workspace-tab-1')?.focus();
   }, [activeSelectedId, activeWorkspaceTab]);
 
-  /**
-   * Draw corridor road geometry while the Corridor tab is open.
-   *
-   * The panel reports one corridor's congestion and offers to solve its
-   * departure, so the map has to show which stretch of road that is. The
-   * lines are scoped to this tab: on the Hotspots tab they would sit on top
-   * of the 30 watch areas without belonging to anything on screen.
-   */
+  /** Draw corridor road geometry throughout the congestion workspace. */
   useEffect(() => {
     const map = mapInstanceRef.current;
     const casings = corridorCasingRefs.current;
@@ -192,8 +185,6 @@ export const MapView: React.FC<MapViewProps> = ({
     };
 
     clearCorridorLayers();
-    if (activeWorkspaceTab !== 'corridor') return;
-
     const geometryById = new Map(routes.map(route => [route.id, route.geometry]));
     Object.entries(CORRIDOR_ENDPOINTS).forEach(([id, [from, to]]) => {
       const geometry = geometryById.get(id);
@@ -221,6 +212,7 @@ export const MapView: React.FC<MapViewProps> = ({
       line.on('click', () => {
         focusSelectedTabOnOpenRef.current = true;
         setSelectedId(id);
+        setActiveWorkspaceTab('corridor');
       });
 
       casings.set(id, casing);
@@ -228,7 +220,7 @@ export const MapView: React.FC<MapViewProps> = ({
     });
 
     return clearCorridorLayers;
-  }, [activeWorkspaceTab, routes]);
+  }, [routes]);
 
   /**
    * Recolour on each poll by restyling the existing layers rather than
@@ -254,9 +246,9 @@ export const MapView: React.FC<MapViewProps> = ({
         { text: `Delay +${corridor.delay_mins} min · ${corridor.distance_km} km` },
       ]), { sticky: true });
     });
-  }, [activeSelectedId, corridors, routes, activeWorkspaceTab]);
+  }, [activeSelectedId, corridors, routes]);
 
-  /** Render backend-weighted watch areas without route-line clutter. */
+  /** Render backend-weighted watch areas alongside the corridor network. */
   useEffect(() => {
     const map = mapInstanceRef.current;
     if (!map) return;
