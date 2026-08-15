@@ -445,6 +445,8 @@ export interface RouteEndpointSnapshot {
 }
 
 export interface RouteOptimizationResult {
+  route_id?: string;
+  route_code?: string;
   route_type?: 'ROAD_ROUTE' | 'MULTIMODAL_FERRY_ROUTE' | 'FASTEST_BYPASS' | 'ECO_EFFICIENT' | 'PORT_SYNC';
   corridor: {
     id: string;

@@ -62,6 +62,22 @@ const WEATHER_OPTIONS = [
   { id: 2, label: 'Heavy storm', icon: TriangleAlert },
 ] as const;
 
+function twelveHourValue(hour: number): number {
+  return hour % 12 || 12;
+}
+
+function twentyFourHourValue(hour: number, period: 'AM' | 'PM'): number {
+  return (hour % 12) + (period === 'PM' ? 12 : 0);
+}
+
+function nextSelectedTimeIso(hour: number, minute: number): string {
+  const now = new Date();
+  const selected = new Date(now);
+  selected.setHours(hour, minute, 0, 0);
+  if (selected.getTime() < now.getTime()) selected.setDate(selected.getDate() + 1);
+  return selected.toISOString();
+}
+
 const VEHICLE_ICONS: Record<VehicleIconKey, LucideIcon> = {
   car: Car,
   electric: Zap,
@@ -162,6 +178,10 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
   const [benchmarkLoading, setBenchmarkLoading] = useState(false);
   const [activeResultTab, setActiveResultTab] = useState<RouteResultTab>('summary');
   const [vehicleMenuOpen, setVehicleMenuOpen] = useState(false);
+  const [timeMode, setTimeMode] = useState<'departure' | 'arrival'>('departure');
+  const [departureMinute, setDepartureMinute] = useState(() => new Date().getMinutes());
+  const [arrivalHour, setArrivalHour] = useState(() => (new Date().getHours() + 1) % 24);
+  const [arrivalMinute, setArrivalMinute] = useState(() => new Date().getMinutes());
   const optimizationRequestRef = useRef(0);
   const benchmarkRequestRef = useRef(0);
   const vehicleSelectorRef = useRef<HTMLDivElement>(null);
@@ -292,6 +312,9 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
     setLoading(true);
     setRouteError(null);
     try {
+      const selectedRequestHour = timeMode === 'departure'
+        ? hour
+        : Math.floor((arrivalHour * 60 + arrivalMinute - (result?.total_eta_mins ?? 60) + 1440) % 1440 / 60);
       let res;
       let requestedOrigin: FreeLocation;
       let requestedDestination: FreeLocation;
@@ -305,7 +328,12 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
           : freeDest!;
         res = await requestMultiStopRouteOptimization(
           [requestedOrigin, ...waypoints.filter((point): point is FreeLocation => point !== null), requestedDestination],
-          vehicleType, hour, weather, routePreference,
+          vehicleType,
+          timeMode === 'departure'
+            ? { departureAt: nextSelectedTimeIso(hour, departureMinute) }
+            : { arriveBy: nextSelectedTimeIso(arrivalHour, arrivalMinute) },
+          weather,
+          routePreference,
         );
       } else if (isNamedMode) {
         requestedOrigin = {
@@ -322,7 +350,7 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
           originId,
           destinationId,
           vehicleType,
-          hour,
+          selectedRequestHour,
           weather,
           routePreference,
         );
@@ -334,7 +362,7 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
           freeOrigin,
           freeDest,
           vehicleType,
-          hour,
+          selectedRequestHour,
           weather,
           routePreference,
         );
@@ -800,27 +828,121 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
           </div>
         </fieldset>
 
-        <div className="route-departure-time-control">
-          <div className="route-departure-time-header">
-            <label htmlFor="route-departure-hour" className="route-departure-time-label">Departure hour</label>
-            <output htmlFor="route-departure-hour" className="route-departure-time-value">{String(hour).padStart(2, '0')}:00</output>
-          </div>
-          <input
-            id="route-departure-hour"
-            type="range"
-            min="0"
-            max="23"
-            value={hour}
-            onChange={(e) => {
-              setHour(Number(e.target.value));
+        <div className="route-time-card-grid" role="radiogroup" aria-label="Journey time preference">
+          {([
+            { id: 'departure' as const, label: 'Departure time', selectedHour: hour, selectedMinute: departureMinute },
+            { id: 'arrival' as const, label: 'Arrival time', selectedHour: arrivalHour, selectedMinute: arrivalMinute },
+          ]).map((option) => {
+            const selected = timeMode === option.id;
+            const selectMode = () => {
+              setTimeMode(option.id);
               invalidateResult();
-            }}
-            aria-label={`Departure hour: ${String(hour).padStart(2, '0')}:00`}
-            className="route-departure-time-slider"
-          />
-          <div aria-hidden="true" className="route-departure-time-ticks">
-            <span>00:00</span><span>12:00</span><span>23:00</span>
-          </div>
+            };
+            const setHourValue = (value: number) => {
+              if (!Number.isInteger(value) || value < 1 || value > 12) return;
+              const period = option.selectedHour >= 12 ? 'PM' : 'AM';
+              const next = twentyFourHourValue(value, period);
+              if (option.id === 'departure') setHour(next);
+              else setArrivalHour(next);
+              invalidateResult();
+            };
+            const setMinuteValue = (value: number) => {
+              if (!Number.isInteger(value) || value < 0 || value > 59) return;
+              if (option.id === 'departure') setDepartureMinute(value);
+              else setArrivalMinute(value);
+              invalidateResult();
+            };
+            return (
+              <div
+                key={option.id}
+                className="ui-sand-interactive route-time-card"
+                data-selected={selected}
+                role="radio"
+                aria-checked={selected}
+                tabIndex={0}
+                onClick={selectMode}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    selectMode();
+                  }
+                }}
+              >
+                <span className="route-time-card-label">{option.label}</span>
+                <div className="route-time-selectors">
+                  <label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="12"
+                      step="1"
+                      inputMode="numeric"
+                      value={twelveHourValue(option.selectedHour)}
+                      aria-label={`${option.label} hour`}
+                      onChange={(event) => {
+                        selectMode();
+                        setHourValue(Number(event.target.value));
+                      }}
+                      onPointerDown={(event) => { delete event.currentTarget.dataset.keyboardFocus; }}
+                      onKeyDown={(event) => { event.currentTarget.dataset.keyboardFocus = 'true'; }}
+                      onBlur={(event) => { delete event.currentTarget.dataset.keyboardFocus; }}
+                      onWheel={(event) => {
+                        if (document.activeElement !== event.currentTarget) return;
+                        event.preventDefault();
+                        const current = twelveHourValue(option.selectedHour);
+                        setHourValue(event.deltaY < 0 ? (current % 12) + 1 : ((current + 10) % 12) + 1);
+                      }}
+                    />
+                  </label>
+                  <span className="route-time-unit" aria-hidden="true">:</span>
+                  <label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="59"
+                      step="1"
+                      inputMode="numeric"
+                      value={String(option.selectedMinute).padStart(2, '0')}
+                      aria-label={`${option.label} minute`}
+                      onChange={(event) => {
+                        selectMode();
+                        setMinuteValue(Number(event.target.value));
+                      }}
+                      onPointerDown={(event) => { delete event.currentTarget.dataset.keyboardFocus; }}
+                      onKeyDown={(event) => { event.currentTarget.dataset.keyboardFocus = 'true'; }}
+                      onBlur={(event) => { delete event.currentTarget.dataset.keyboardFocus; }}
+                      onWheel={(event) => {
+                        if (document.activeElement !== event.currentTarget) return;
+                        event.preventDefault();
+                        const current = option.selectedMinute;
+                        setMinuteValue(event.deltaY < 0 ? (current + 1) % 60 : (current + 59) % 60);
+                      }}
+                    />
+                  </label>
+                  <div className="route-time-period-selector" role="group" aria-label={`${option.label} AM or PM`}>
+                    {(['AM', 'PM'] as const).map((period) => {
+                      const periodSelected = (option.selectedHour >= 12 ? 'PM' : 'AM') === period;
+                      return (
+                        <button
+                          type="button"
+                          key={period}
+                          aria-pressed={periodSelected}
+                          onClick={() => {
+                            selectMode();
+                            const value = twentyFourHourValue(twelveHourValue(option.selectedHour), period);
+                            if (option.id === 'departure') setHour(value);
+                            else setArrivalHour(value);
+                          }}
+                        >
+                          {period}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
         </div>
         </div>
 
@@ -883,12 +1005,11 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
           <>
             <header className="route-result-header">
               <div className="route-result-title-group">
-                <span className="route-ready-status">
-                  <CircleCheck size={ICON_SIZE.medium} aria-hidden="true" /> Route ready
-                </span>
+                <div className="route-result-title-row">
                 <h2 className="route-result-title">
                   {resultOriginName} <span aria-hidden="true" className="route-result-direction-arrow">→</span> {resultDestinationName}
                 </h2>
+                </div>
               </div>
               <div className="route-result-actions">
                 {googleRouteBenchmarkEnabled() && resultOrigin && resultDestination ? (
@@ -956,6 +1077,16 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
                 </div>
               ) : null}
             </section>
+
+            {result.route_code ? (
+              <section className="route-code-card" aria-labelledby="route-code-card-heading">
+                <div>
+                  <span className="route-code-card-eyebrow">Driver route ID</span>
+                  <h3 id="route-code-card-heading">Use this seven-character ID to retrieve the journey</h3>
+                </div>
+                <strong aria-label={`Route ID ${result.route_code}`}>{result.route_code}</strong>
+              </section>
+            ) : null}
 
             <dl className="route-metrics-grid" aria-label="Route summary metrics" >
               {[

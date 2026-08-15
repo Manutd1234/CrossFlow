@@ -1383,7 +1383,7 @@ export async function requestFreeRouteOptimization(
 export async function requestMultiStopRouteOptimization(
   stops: Array<FreeLocation & { dwell_mins?: number }>,
   vehicleType: VehicleType,
-  hour: number = 14,
+  schedule: { departureAt?: string; arriveBy?: string },
   weather: number = 0,
   routePreference: RoutePreference = 'BALANCED',
 ): Promise<Fetched<RouteOptimizationResult>> {
@@ -1396,12 +1396,18 @@ export async function requestMultiStopRouteOptimization(
           lat: stop.lat, lng: stop.lng, name: stop.display_name,
           dwell_mins: stop.dwell_mins ?? 0,
         })),
-        vehicle_type: vehicleType, hour, weather,
+        vehicle_type: vehicleType,
+        ...(schedule.departureAt ? { departure_at: schedule.departureAt } : {}),
+        ...(schedule.arriveBy ? { arrive_by: schedule.arriveBy } : {}),
+        weather,
         route_preference: routePreference, optimize_order: false,
       }),
     }, true,
   ).then(validatedRoadPayload);
   if (!payload) throw new ApiRequestError('The backend returned an invalid multi-stop route.', 503);
+  if (typeof payload.route_code !== 'string' || !/^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{7}$/.test(payload.route_code)) {
+    throw new ApiRequestError('The backend returned no valid seven-character route code.', 503);
+  }
   return wrap(payload, payload);
 }
 
