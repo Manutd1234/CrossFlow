@@ -358,13 +358,11 @@ h1, h2, h3, h4, h5, h6 {
   position: relative;
   top: auto;
   z-index: auto;
+  width: 100%;
   min-width: 0;
   min-height: 0;
-  flex: 1 1 0;
-  max-width: min(
-    calc(100vw - var(--workspace-gutter) - var(--workspace-gutter)),
-    calc(var(--content-max) - var(--workspace-gutter) - var(--workspace-gutter))
-  );
+  flex: 1 1 1120px;
+  max-width: 1120px;
 }
 
 .app-topbar > * {
@@ -4013,6 +4011,11 @@ a:focus-visible {
   grid-template-rows: auto minmax(0, 1fr);
 }
 
+.route-planner-layout--driver {
+  grid-template-areas: "sidebar result";
+  grid-template-rows: minmax(0, 1fr);
+}
+
 .route-planner-layout > .workspace-subtabs__rail {
   grid-area: mode;
 }
@@ -4672,6 +4675,12 @@ a:focus-visible {
       "result";
     grid-template-columns: 1fr;
     grid-template-rows: auto;
+  }
+
+  .route-planner-layout--driver {
+    grid-template-areas:
+      "sidebar"
+      "result";
   }
 
 }

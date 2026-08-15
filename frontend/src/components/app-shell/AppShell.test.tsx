@@ -194,6 +194,7 @@ describe('application shell DOM', () => {
     );
 
     const lookup = container.querySelector('form[aria-label="Assigned route lookup"]');
+    expect(container.querySelector('.route-planner-layout--driver')).not.toBeNull();
     expect(lookup?.querySelector('#driver-route-code')).not.toBeNull();
     expect(lookup?.querySelectorAll('fieldset')).toHaveLength(0);
     expect(lookup?.querySelector('button[type="submit"]')?.textContent).toContain('Load Route');

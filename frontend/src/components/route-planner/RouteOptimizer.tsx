@@ -506,7 +506,7 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
   }, []);
 
   return (
-    <div className="app-screen-layout route-planner-layout">
+    <div className={`app-screen-layout route-planner-layout${driverAccess ? ' route-planner-layout--driver' : ''}`}>
       {!driverAccess ? <div className="workspace-subtabs__rail">
         <div role="group" aria-label="Location selection mode" className="workspace-subtabs__tablist route-location-mode-tabs">
           <button
