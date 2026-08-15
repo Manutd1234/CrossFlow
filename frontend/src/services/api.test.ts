@@ -409,6 +409,38 @@ describe('free-route API fallback', () => {
     expect(response.data.route_data_source).toBe('bundled_client_openstreetmap');
   });
 
+  it('keeps exact departure planning in bundled simulation when the backend hedge is aborted', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(() => new Promise<Response>(() => undefined)));
+    planBundledRoute.mockResolvedValue(bundledPlan);
+    const departureAt = '2026-08-20T09:30:00+07:00';
+
+    const pendingResponse = requestFreeRouteOptimization(
+      origin,
+      destination,
+      'COMMUTER',
+      9,
+      0,
+      'BALANCED',
+      { departure_at: departureAt },
+    );
+    await vi.advanceTimersByTimeAsync(1_200);
+
+    const response = await pendingResponse;
+    expect(response.source).toBe('offline');
+    expect(response.data.planned_departure).toBe(departureAt);
+    expect(response.data.scheduling).toMatchObject({
+      mode: 'DEPART_AT',
+      requested_departure_at: departureAt,
+    });
+    expect(response.data.schedule_provenance).toMatchObject({
+      source: 'committed_timetable_simulation',
+      freshness_durability: 'committed_browser_snapshot',
+      shared_freshness: false,
+      live: false,
+    });
+  });
+
   it('uses the bundled road graph with navigation and genuine alternatives when the API is offline', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('offline')));
     planBundledRoute.mockResolvedValue(bundledPlan);
