@@ -4174,6 +4174,47 @@ a:focus-visible {
   box-shadow: var(--shadow-card-hover);
 }
 
+.route-add-stop-button {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  background: var(--bg-secondary);
+  color: var(--accent-cyan);
+  cursor: pointer;
+}
+
+.route-add-stop-button:hover {
+  box-shadow: var(--shadow-card);
+  transform: translateY(-1px);
+}
+
+.route-waypoint-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 30px;
+  align-items: center;
+  gap: 8px;
+}
+
+.route-waypoint-remove {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.route-waypoint-remove:hover {
+  background: rgba(217, 111, 100, 0.12);
+  color: var(--accent-rose);
+}
+
 .route-validation {
   color: var(--accent-rose);
   font-size: 0.75rem;
@@ -4775,6 +4816,15 @@ a:focus-visible {
 .route-planner-layout .route-location-picker .route-swap-button {
   grid-column: 3;
   grid-row: 1;
+}
+
+.route-planner-layout .route-location-picker .route-add-stop-button {
+  grid-column: 3;
+  grid-row: 1;
+  align-self: center;
+  justify-self: center;
+  margin-top: 82px;
+  z-index: 1;
 }
 
 .route-planner-layout .route-location-picker .route-validation {

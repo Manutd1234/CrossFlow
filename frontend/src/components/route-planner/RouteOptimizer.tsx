@@ -13,10 +13,11 @@ import {
   ApiRequestError,
   googleRouteBenchmarkEnabled,
   requestFreeRouteOptimization,
+  requestMultiStopRouteOptimization,
   requestRouteBenchmark,
   requestRouteOptimization,
 } from '../../services/api';
-import { Anchor, ArrowDownUp, Bike, BusFront, Car, ChevronDown, CircleCheck, CircleDot, CircleSmall, Clock, CloudRain, CloudSun, Coffee, CornerUpLeft, CornerUpRight, Flag, Fuel, Globe, Info, Leaf, Lightbulb, LoaderCircle, MapPin, MoveUp, Navigation, Package, Redo, RotateCw, Route, ShieldCheck, Ship, Sparkles, TriangleAlert, Truck, Users, Zap, type LucideIcon } from 'lucide-react';
+import { Anchor, ArrowDownUp, Bike, BusFront, Car, ChevronDown, CircleCheck, CircleDot, CircleSmall, Clock, CloudRain, CloudSun, Coffee, CornerUpLeft, CornerUpRight, Flag, Fuel, Globe, Info, Leaf, Lightbulb, LoaderCircle, MapPin, MoveUp, Navigation, Package, Plus, Redo, RotateCw, Route, ShieldCheck, Ship, Sparkles, TriangleAlert, Truck, Users, X, Zap, type LucideIcon } from 'lucide-react';
 import { ICON_SIZE } from '../../theme/iconSizes';
 
 import {
@@ -32,10 +33,7 @@ import {
   vehicleProfile,
   type VehicleIconKey,
 } from '../../data/vehicleCatalog';
-import {
-  ROUTE_PREFERENCE_OPTIONS,
-  isRoutePreferenceAvailable,
-} from '../../data/routePreferences';
+import { isRoutePreferenceAvailable } from '../../data/routePreferences';
 
 
 interface RouteOptimizerProps {
@@ -72,13 +70,6 @@ const VEHICLE_ICONS: Record<VehicleIconKey, LucideIcon> = {
   minibus: Users,
   bus: BusFront,
   truck: Truck,
-};
-const ROUTE_PREFERENCE_ICONS: Record<RoutePreference, LucideIcon> = {
-  BALANCED: Sparkles,
-  FASTEST: Zap,
-  SHORTEST: Route,
-  EASY: ShieldCheck,
-  LOCAL: MapPin,
 };
 const VEHICLE_GROUPS = ['Passenger', 'Delivery', 'Public transport', 'Freight'] as const;
 const VEHICLE_OPTIONS_BY_GROUP = VEHICLE_GROUPS.map((group) => ({
@@ -179,10 +170,6 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
   const vehicleOptionRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const selectedVehicleProfile = vehicleProfile(vehicleType);
   const SelectedVehicleIcon = VEHICLE_ICONS[selectedVehicleProfile.icon];
-  const selectedRoutePreference = ROUTE_PREFERENCE_OPTIONS.find(
-    (preference) => preference.id === routePreference,
-  ) ?? ROUTE_PREFERENCE_OPTIONS[0];
-  const localRouteAvailable = isRoutePreferenceAvailable('LOCAL', vehicleType);
 
   useEffect(() => {
     if (!vehicleMenuOpen) return;
@@ -218,7 +205,8 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
   const [mode, setMode] = useState<'named' | 'free'>(
     result ? (resultIsFreeRoute ? 'free' : 'named') : 'free',
   );
-  const [pickerTarget, setPickerTarget] = useState<'origin' | 'dest' | null>(null);
+  const [pickerTarget, setPickerTarget] = useState<'origin' | 'dest' | number | null>(null);
+  const [waypoints, setWaypoints] = useState<Array<FreeLocation | null>>([]);
 
   // Named-mode derived state (unchanged from before)
   const originNamed = locations.find(l => l.id === originId) || locations[0];
@@ -255,7 +243,8 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
   const canOptimizeEndpoints = isNamedMode
     ? !sameLocationNamed
     : canOptimizeFree;
-  const canOptimize = canOptimizeEndpoints && preferenceAvailable;
+  const canOptimize = canOptimizeEndpoints && preferenceAvailable
+    && waypoints.every((waypoint) => waypoint !== null);
 
   const clearRouteBenchmark = useCallback(() => {
     benchmarkRequestRef.current += 1;
@@ -285,6 +274,12 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
       setFreeOrigin(freeDest);
       setFreeDest(tmp);
     }
+    setWaypoints((current) => [...current].reverse());
+    invalidateResult();
+  };
+
+  const addWaypoint = () => {
+    setWaypoints((current) => [...current, null]);
     invalidateResult();
   };
 
@@ -300,7 +295,19 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
       let res;
       let requestedOrigin: FreeLocation;
       let requestedDestination: FreeLocation;
-      if (isNamedMode) {
+      if (waypoints.length > 0) {
+        if ((!isNamedMode && (!freeOrigin || !freeDest)) || waypoints.some((point) => !point)) return;
+        requestedOrigin = isNamedMode
+          ? { lat: originNamed.lat, lng: originNamed.lng, display_name: originNamed.name }
+          : freeOrigin!;
+        requestedDestination = isNamedMode
+          ? { lat: destNamed.lat, lng: destNamed.lng, display_name: destNamed.name }
+          : freeDest!;
+        res = await requestMultiStopRouteOptimization(
+          [requestedOrigin, ...waypoints.filter((point): point is FreeLocation => point !== null), requestedDestination],
+          vehicleType, hour, weather, routePreference,
+        );
+      } else if (isNamedMode) {
         requestedOrigin = {
           lat: originNamed.lat,
           lng: originNamed.lng,
@@ -537,6 +544,50 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
                 />
               )}
 
+              {waypoints.map((waypoint, index) => (
+                <div className="route-waypoint-row" key={`waypoint-${index}`}>
+                  <LocationSearch
+                    id={`route-waypoint-${index}`}
+                    label={`Stop ${index + 1}`}
+                    value={waypoint}
+                    onChange={(location) => {
+                      setWaypoints((current) => current.map((item, itemIndex) => (
+                        itemIndex === index ? location : item
+                      )));
+                      invalidateResult();
+                    }}
+                    onNamedLocationSelect={isNamedMode ? (location) => {
+                      setWaypoints((current) => current.map((item, itemIndex) => (
+                        itemIndex === index
+                          ? { lat: location.lat, lng: location.lng, display_name: location.name }
+                          : item
+                      )));
+                      invalidateResult();
+                    } : undefined}
+                    namedLocations={locations}
+                    markerColor="cyan"
+                    showMapPickerButton={false}
+                    showSearchButton={false}
+                    showHelpText={false}
+                    compactLayout
+                    savedPlacesOnly={isNamedMode}
+                    placeholder="Add an intermediate stop"
+                    onOpenMapPicker={() => setPickerTarget(index)}
+                  />
+                  <button
+                    type="button"
+                    className="route-waypoint-remove"
+                    aria-label={`Remove stop ${index + 1}`}
+                    onClick={() => {
+                      setWaypoints((current) => current.filter((_, itemIndex) => itemIndex !== index));
+                      invalidateResult();
+                    }}
+                  >
+                    <X size={ICON_SIZE.medium} aria-hidden="true" />
+                  </button>
+                </div>
+              ))}
+
               {isNamedMode ? (
                 <LocationSearch
                   id="route-destination-named"
@@ -583,6 +634,16 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
               title="Swap origin and destination"
             >
               <ArrowDownUp size={ICON_SIZE.large} aria-hidden="true" />
+            </button>
+
+            <button
+              type="button"
+              className="route-add-stop-button"
+              onClick={addWaypoint}
+              aria-label="Add an intermediate stop"
+              title="Add an intermediate stop"
+            >
+              <Plus size={ICON_SIZE.medium} aria-hidden="true" />
             </button>
 
             {(isNamedMode ? sameLocationNamed : sameLocationFree) && (
@@ -695,62 +756,6 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
               </div>
             ) : null}
           </div>
-        </fieldset>
-
-
-        <fieldset className="route-preference-fieldset">
-          <legend className="route-planner-fieldset-legend">Route preference</legend>
-          <div className="route-preference-grid">
-            {ROUTE_PREFERENCE_OPTIONS.map((preference) => {
-              const PreferenceIcon = ROUTE_PREFERENCE_ICONS[preference.id];
-              const isSelected = routePreference === preference.id;
-              const isAvailable = isRoutePreferenceAvailable(
-                preference.id,
-                vehicleType,
-              );
-              const unavailableDescriptionId = preference.id === 'LOCAL' && !isAvailable
-                ? 'route-preference-local-unavailable'
-                : undefined;
-              return (
-                <button
-                  key={preference.id}
-                  type="button"
-                  className="ui-button-choice ui-sand-interactive route-preference-option"
-                  aria-pressed={isSelected}
-                  aria-label={`${preference.name}. ${preference.description}`}
-                  aria-describedby={unavailableDescriptionId}
-                  disabled={!isAvailable}
-                  onClick={() => {
-                    if (isSelected || !isAvailable) return;
-                    setRoutePreference(preference.id);
-                    invalidateResult();
-                  }}
-                >
-                  <span className="route-choice-option-heading">
-                    <PreferenceIcon size={ICON_SIZE.medium} aria-hidden="true" />
-                    <strong className="route-choice-option-label">{preference.name}</strong>
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-          <p
-            id="route-preference-selected-description"
-            className="route-preference-selected-description"
-            role="status"
-            aria-live="polite"
-          >
-            {selectedRoutePreference.description}
-          </p>
-          {!localRouteAvailable ? (
-            <p
-              id="route-preference-local-unavailable"
-              className="route-preference-unavailable-note"
-            >
-              <TriangleAlert size={ICON_SIZE.medium} aria-hidden="true" />
-              Local shortcuts unavailable: {selectedVehicleProfile.label} is too large for unverified narrow-road clearance.
-            </p>
-          ) : null}
         </fieldset>
 
 
@@ -1493,15 +1498,19 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
       <WorldMapPickerModal
         isOpen={pickerTarget !== null}
         onClose={closePicker}
-        title={pickerTarget === 'origin' ? 'Select origin in Singapore or Batam' : 'Select destination in Singapore or Batam'}
-        initialLat={pickerTarget === 'origin' ? (freeOrigin?.lat ?? 1.12) : (freeDest?.lat ?? 1.12)}
-        initialLng={pickerTarget === 'origin' ? (freeOrigin?.lng ?? 104.02) : (freeDest?.lng ?? 104.02)}
-        initialName={pickerTarget === 'origin' ? freeOrigin?.display_name : freeDest?.display_name}
+        title={pickerTarget === 'origin' ? 'Select origin in Singapore or Batam' : pickerTarget === 'dest' ? 'Select destination in Singapore or Batam' : 'Select intermediate stop'}
+        initialLat={pickerTarget === 'origin' ? (freeOrigin?.lat ?? 1.12) : pickerTarget === 'dest' ? (freeDest?.lat ?? 1.12) : (typeof pickerTarget === 'number' ? waypoints[pickerTarget]?.lat : undefined) ?? 1.12}
+        initialLng={pickerTarget === 'origin' ? (freeOrigin?.lng ?? 104.02) : pickerTarget === 'dest' ? (freeDest?.lng ?? 104.02) : (typeof pickerTarget === 'number' ? waypoints[pickerTarget]?.lng : undefined) ?? 104.02}
+        initialName={pickerTarget === 'origin' ? freeOrigin?.display_name : pickerTarget === 'dest' ? freeDest?.display_name : typeof pickerTarget === 'number' ? waypoints[pickerTarget]?.display_name : undefined}
         onSelectLocation={(loc) => {
           if (pickerTarget === 'origin') {
             setFreeOrigin(loc);
-          } else {
+          } else if (pickerTarget === 'dest') {
             setFreeDest(loc);
+          } else if (typeof pickerTarget === 'number') {
+            setWaypoints((current) => current.map((item, index) => (
+              index === pickerTarget ? loc : item
+            )));
           }
           setPickerTarget(null);
           invalidateResult();

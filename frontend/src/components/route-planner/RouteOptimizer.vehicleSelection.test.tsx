@@ -84,51 +84,19 @@ describe('vehicle profile selection', () => {
       .toContain('bus lanes are not modelled');
   });
 
-  it('offers five accessible preferences and gates local roads by vehicle size', () => {
+  it('removes route preferences and adds intermediate location fields', () => {
     const container = renderIntoDom(<VehicleHarness />);
-    const fieldset = container.querySelector('.route-preference-fieldset');
-    const buttons = Array.from(
-      fieldset?.querySelectorAll<HTMLButtonElement>('button') ?? [],
-    );
+    expect(container.querySelector('.route-preference-fieldset')).toBeNull();
 
-    expect(fieldset?.querySelector('legend')?.textContent).toContain('Route preference');
-    expect(buttons).toHaveLength(5);
-    expect(buttons.every(button => button.classList.contains('ui-sand-interactive'))).toBe(true);
-    expect(buttons.map(button => button.textContent)).toEqual(expect.arrayContaining([
-      expect.stringContaining('Balanced'),
-      expect.stringContaining('Fastest'),
-      expect.stringContaining('Shortest'),
-      expect.stringContaining('Easy'),
-      expect.stringMatching(/Local shortcuts/i),
-    ]));
-    expect(buttons.find(button => button.textContent?.includes('Balanced'))
-      ?.getAttribute('aria-pressed')).toBe('true');
+    const swap = container.querySelector<HTMLButtonElement>('.route-swap-button');
+    const add = container.querySelector<HTMLButtonElement>('.route-add-stop-button');
+    expect(swap).not.toBeNull();
+    expect(add?.getAttribute('aria-label')).toBe('Add an intermediate stop');
 
-    const easy = buttons.find(button => button.textContent?.includes('Easy'));
-    act(() => easy?.click());
-    expect(easy?.getAttribute('aria-pressed')).toBe('true');
-    expect(container.querySelector('#route-preference-selected-description')?.textContent)
-      .toContain('Prefer through roads with fewer difficult maneuvers');
-
-    const local = buttons.find(button => /Local shortcuts/i.test(button.textContent ?? ''));
-    expect(local?.disabled).toBe(false);
-    act(() => local?.click());
-    expect(local?.getAttribute('aria-pressed')).toBe('true');
-    expect(container.querySelector('#route-preference-selected-description')?.textContent)
-      .toContain('Seek compact routes over mapped public residential roads');
-
-    const vehicleTrigger = container.querySelector<HTMLButtonElement>('#route-vehicle-type');
-    act(() => vehicleTrigger?.click());
-    const cityBus = Array.from(
-      container.querySelectorAll<HTMLButtonElement>('[role="option"]'),
-    ).find(option => option.textContent?.includes('City bus'));
-    act(() => cityBus?.click());
-
-    expect(local?.disabled).toBe(true);
-    expect(local?.getAttribute('aria-describedby')).toBe('route-preference-local-unavailable');
-    expect(container.querySelector('#route-preference-local-unavailable')?.textContent)
-      .toContain('too large for unverified narrow-road clearance');
-    expect(buttons.find(button => button.textContent?.includes('Balanced'))
-      ?.getAttribute('aria-pressed')).toBe('true');
+    act(() => add?.click());
+    const waypoint = container.querySelector('.route-waypoint-row');
+    expect(waypoint).not.toBeNull();
+    expect(waypoint?.textContent).toContain('Stop 1');
+    expect(container.querySelector<HTMLButtonElement>('[aria-label="Remove stop 1"]')).not.toBeNull();
   });
 });
