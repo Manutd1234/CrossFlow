@@ -5329,7 +5329,7 @@ def test_multi_stop_order_is_not_optimized_across_a_ferry_crossing():
 def test_multi_stop_rejects_unusable_itineraries():
     cases = [
         ([_MULTI_STOP_AMPAR, _MULTI_STOP_NAGOYA], "at least three stops"),
-        ([_MULTI_STOP_AMPAR] * 9, "at most 8 stops"),
+        ([_MULTI_STOP_AMPAR] * 6, "at most 5 stops"),
         (
             [{"lat": -6.2, "lng": 106.8}, _MULTI_STOP_NAGOYA, _MULTI_STOP_CENTRE],
             "outside the supported",

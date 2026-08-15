@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { CarFront, LogIn, LogOut, ShieldCheck, TriangleAlert, UserRound } from 'lucide-react';
+import { CarFront, LogIn, LogOut, ShieldCheck, TriangleAlert } from 'lucide-react';
 import { ICON_SIZE } from '../../theme/iconSizes';
 import type { AuthSession, AuthStatus, StoredSession } from '../../types';
 import {
@@ -11,7 +11,6 @@ import {
   signOut,
   supabaseConfigured,
   testAdminConfigured,
-  validSession,
 } from '../../services/auth';
 import './SignInPanel.css';
 
@@ -126,23 +125,6 @@ export function SignInPanel({
     setPassword('');
   };
 
-  const handleRecheck = async () => {
-    if (!session) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const fresh = await validSession(session);
-      onSessionChange(fresh);
-      onIdentityChange(await fetchSession(fresh));
-    } catch (caught) {
-      setError(caught instanceof AuthError ? caught.message : 'Could not refresh your session.');
-      onSessionChange(null);
-      onIdentityChange(null);
-    } finally {
-      setBusy(false);
-    }
-  };
-
   return (
     <div
       className={isGate ? 'signin-gate' : 'signin-backdrop'}
@@ -178,8 +160,6 @@ export function SignInPanel({
                 </span>
               </dd>
             </dl>
-            {/* Naming the source matters: the badge is only trustworthy
-                because the server read it from the database, not the token. */}
             <p className="signin-panel__note">
               Role resolved by the server from <code>{identity.role_source}</code>, not from the
               access token.
@@ -192,15 +172,7 @@ export function SignInPanel({
             <div className="signin-panel__actions">
               <button
                 type="button"
-                className="ui-button-primary"
-                onClick={handleRecheck}
-                disabled={busy}
-              >
-                <UserRound aria-hidden="true" size={ICON_SIZE.medium} /> Re-check role
-              </button>
-              <button
-                type="button"
-                className="signin-panel__secondary"
+                className="ui-button-primary signin-panel__signout"
                 onClick={handleSignOut}
                 disabled={busy}
               >

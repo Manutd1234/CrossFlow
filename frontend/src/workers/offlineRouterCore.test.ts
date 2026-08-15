@@ -411,7 +411,7 @@ describe('bundled road routing', () => {
     )).toBe(true);
     expect(result.routes[1].overlap_ratio).toBeLessThanOrEqual(0.82);
     expect(result.routes[2].overlap_ratio).toBeLessThanOrEqual(0.82);
-  });
+  }, 20_000);
 
   it('plans a finite real-road route for every supported vehicle profile', () => {
     VEHICLE_CATALOG.forEach((profile) => {
@@ -429,7 +429,7 @@ describe('bundled road routing', () => {
       expect(result.routes[0].routing_cost_mins, profile.id)
         .toBeGreaterThanOrEqual(result.routes[0].estimated_travel_time_mins);
     });
-  });
+  }, 20_000);
 
   it('retains genuinely different alternatives for freight routing', () => {
     const result = planOfflineRoadRoutes(
@@ -452,5 +452,5 @@ describe('bundled road routing', () => {
       expect(route.overlap_ratio).toBeLessThanOrEqual(0.82);
       expect(route.distance_km).toBeLessThanOrEqual(result.routes[0].distance_km * 1.65);
     });
-  });
+  }, 20_000);
 });

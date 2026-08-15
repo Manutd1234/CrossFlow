@@ -30,6 +30,7 @@ const BATAM_MAP_MIN_ZOOM = 10;
 interface MapViewProps {
   corridors: Corridor[];
   routes: CorridorRoute[];
+  routesLoading?: boolean;
   trafficSnapshot: Fetched<LiveTrafficData> | null;
   onSelectCorridor: (corridorId: string) => void;
 }
@@ -55,6 +56,7 @@ function hotspotPriorityColor(priority: HotspotWatchPriority): string {
 export const MapView: React.FC<MapViewProps> = ({
   corridors,
   routes,
+  routesLoading = false,
   trafficSnapshot,
   onSelectCorridor,
 }) => {
@@ -185,6 +187,8 @@ export const MapView: React.FC<MapViewProps> = ({
     };
 
     clearCorridorLayers();
+    if (routesLoading) return clearCorridorLayers;
+
     const geometryById = new Map(routes.map(route => [route.id, route.geometry]));
     Object.entries(CORRIDOR_ENDPOINTS).forEach(([id, [from, to]]) => {
       const geometry = geometryById.get(id);
@@ -220,7 +224,7 @@ export const MapView: React.FC<MapViewProps> = ({
     });
 
     return clearCorridorLayers;
-  }, [routes]);
+  }, [routes, routesLoading]);
 
   /**
    * Recolour on each poll by restyling the existing layers rather than

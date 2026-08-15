@@ -34,10 +34,6 @@ import {
   vehicleProfile,
   type VehicleIconKey,
 } from '../../data/vehicleCatalog';
-import {
-  ROUTE_PREFERENCE_OPTIONS,
-  isRoutePreferenceAvailable,
-} from '../../data/routePreferences';
 
 
 interface RouteOptimizerProps {
@@ -53,7 +49,6 @@ interface RouteOptimizerProps {
   vehicleType: VehicleType;
   setVehicleType: (v: VehicleType) => void;
   routePreference: RoutePreference;
-  setRoutePreference: (preference: RoutePreference) => void;
   weather: number;
   setWeather: (w: number) => void;
   hour: number;
@@ -100,6 +95,7 @@ const VEHICLE_OPTIONS_BY_GROUP = VEHICLE_GROUPS.map((group) => ({
 }));
 
 const PRIMARY_ROUTE_ID = 'primary';
+const MAX_INTERMEDIATE_STOPS = 3;
 type RouteResultTab = 'summary' | 'journey' | 'directions' | 'connections';
 
 interface SelectableRoadRoute extends RoadRouteOption {
@@ -170,18 +166,10 @@ function formatManeuverDistance(distanceM: number): string {
   return `${(distanceM / 1000).toFixed(1)} km`;
 }
 
-const ROUTE_PREFERENCE_ICONS: Record<RoutePreference, LucideIcon> = {
-  BALANCED: Sparkles,
-  FASTEST: Zap,
-  SHORTEST: Route,
-  EASY: ShieldCheck,
-  LOCAL: MapPin,
-};
-
 export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
   locations, originId, setOriginId, destinationId, setDestinationId,
   result, setResult, resultSource, setResultSource,
-  vehicleType, setVehicleType, routePreference, setRoutePreference,
+  vehicleType, setVehicleType, routePreference,
   weather, setWeather, hour, setHour,
   driverAccess = false, accessToken = null,
 }) => {
@@ -204,10 +192,6 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
   const vehicleTriggerRef = useRef<HTMLButtonElement>(null);
   const vehicleMenuRef = useRef<HTMLDivElement>(null);
   const vehicleOptionRefs = useRef<Array<HTMLButtonElement | null>>([]);
-  const selectedRoutePreference = ROUTE_PREFERENCE_OPTIONS.find(
-    (option) => option.id === routePreference,
-  ) ?? ROUTE_PREFERENCE_OPTIONS[0];
-  const localRouteAvailable = isRoutePreferenceAvailable('LOCAL', vehicleType);
   const selectedVehicleProfile = vehicleProfile(vehicleType);
   const SelectedVehicleIcon = VEHICLE_ICONS[selectedVehicleProfile.icon];
 
@@ -274,16 +258,11 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
     Math.abs(freeOrigin.lng - freeDest.lng) < 0.0001
   );
   const canOptimizeFree = !!(freeOrigin && freeDest && !sameLocationFree);
-  const preferenceAvailable = isRoutePreferenceAvailable(
-    routePreference,
-    vehicleType,
-  );
-
   const isNamedMode = mode === 'named';
   const canOptimizeEndpoints = isNamedMode
     ? !sameLocationNamed
     : canOptimizeFree;
-  const canOptimize = canOptimizeEndpoints && preferenceAvailable
+  const canOptimize = canOptimizeEndpoints
     && waypoints.every((waypoint) => waypoint !== null);
 
   const clearRouteBenchmark = useCallback(() => {
@@ -319,7 +298,9 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
   };
 
   const addWaypoint = () => {
-    setWaypoints((current) => [...current, null]);
+    setWaypoints((current) => (
+      current.length < MAX_INTERMEDIATE_STOPS ? [...current, null] : current
+    ));
     invalidateResult();
   };
 
@@ -332,6 +313,9 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
     setLoading(true);
     setRouteError(null);
     try {
+      const schedule = timeMode === 'departure'
+        ? { departure_at: nextSelectedTimeIso(hour, departureMinute) }
+        : { arrive_by: nextSelectedTimeIso(arrivalHour, arrivalMinute) };
       const selectedRequestHour = timeMode === 'departure'
         ? hour
         : Math.floor((arrivalHour * 60 + arrivalMinute - (result?.total_eta_mins ?? 60) + 1440) % 1440 / 60);
@@ -349,9 +333,9 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
         res = await requestMultiStopRouteOptimization(
           [requestedOrigin, ...waypoints.filter((point): point is FreeLocation => point !== null), requestedDestination],
           vehicleType,
-          timeMode === 'departure'
-            ? { departureAt: nextSelectedTimeIso(hour, departureMinute) }
-            : { arriveBy: nextSelectedTimeIso(arrivalHour, arrivalMinute) },
+          schedule.departure_at
+            ? { departureAt: schedule.departure_at }
+            : { arriveBy: schedule.arrive_by },
           weather,
           routePreference,
         );
@@ -373,6 +357,7 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
           selectedRequestHour,
           weather,
           routePreference,
+          schedule,
         );
       } else {
         if (!freeOrigin || !freeDest) return;
@@ -385,6 +370,7 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
           selectedRequestHour,
           weather,
           routePreference,
+          schedule,
         );
       }
       if (requestId !== optimizationRequestRef.current) return;
@@ -748,8 +734,11 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
                 type="button"
                 className="route-add-stop-button"
                 onClick={addWaypoint}
+                disabled={waypoints.length >= MAX_INTERMEDIATE_STOPS}
                 aria-label="Add an intermediate stop"
-                title="Add an intermediate stop"
+                title={waypoints.length >= MAX_INTERMEDIATE_STOPS
+                  ? 'Routes support up to 3 intermediate stops (5 locations total)'
+                  : 'Add an intermediate stop'}
               >
                 <Plus size={ICON_SIZE.large} aria-hidden="true" />
               </button>
@@ -843,9 +832,6 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
                               setVehicleMenuOpen(false);
                               if (!isSelected) {
                                 setVehicleType(profile.id);
-                                if (!isRoutePreferenceAvailable(routePreference, profile.id)) {
-                                  setRoutePreference('BALANCED');
-                                }
                                 invalidateResult();
                               }
                               vehicleTriggerRef.current?.focus();
@@ -865,64 +851,6 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
               </div>
             ) : null}
           </div>
-        </fieldset>
-
-
-        <fieldset className="route-preference-fieldset">
-          <legend className="route-planner-fieldset-legend">Route preference</legend>
-          <div className="route-preference-grid">
-            {ROUTE_PREFERENCE_OPTIONS.map((preference) => {
-              const PreferenceIcon = ROUTE_PREFERENCE_ICONS[preference.id];
-              const isSelected = routePreference === preference.id;
-              const isAvailable = isRoutePreferenceAvailable(
-                preference.id,
-                vehicleType,
-              );
-              const unavailableDescriptionId = preference.id === 'LOCAL' && !isAvailable
-                ? 'route-preference-local-unavailable'
-                : undefined;
-              return (
-                <button
-                  key={preference.id}
-                  type="button"
-                  className="ui-button-choice ui-sand-interactive route-preference-option"
-                  aria-pressed={isSelected}
-                  aria-label={`${preference.name}. ${preference.description}`}
-                  aria-describedby={unavailableDescriptionId}
-                  disabled={!isAvailable}
-                  onClick={() => {
-                    if (isSelected || !isAvailable) return;
-                    setRoutePreference(preference.id);
-                    // The solved route answers the previous objective, so it
-                    // must not stay on screen labelled as the new one.
-                    invalidateResult();
-                  }}
-                >
-                  <span className="route-choice-option-heading">
-                    <PreferenceIcon size={ICON_SIZE.medium} aria-hidden="true" />
-                    <strong className="route-choice-option-label">{preference.name}</strong>
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-          <p
-            id="route-preference-selected-description"
-            className="route-preference-selected-description"
-            role="status"
-            aria-live="polite"
-          >
-            {selectedRoutePreference.description}
-          </p>
-          {!localRouteAvailable ? (
-            <p
-              id="route-preference-local-unavailable"
-              className="route-preference-unavailable-note"
-            >
-              <TriangleAlert size={ICON_SIZE.medium} aria-hidden="true" />
-              Local shortcuts unavailable: {selectedVehicleProfile.label} is too large for unverified narrow-road clearance.
-            </p>
-          ) : null}
         </fieldset>
 
 

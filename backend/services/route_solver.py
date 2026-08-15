@@ -1662,7 +1662,7 @@ def optimize_free_route(
 # Every leg runs a full A* search over the committed 115k-node graph, so the
 # request cost grows linearly with the stop count. The cap keeps the worst
 # case bounded rather than letting one request occupy a worker indefinitely.
-MAX_MULTI_STOP_COUNT = 8
+MAX_MULTI_STOP_COUNT = 5
 MAX_MULTI_STOP_DWELL_MINS = 720.0
 
 

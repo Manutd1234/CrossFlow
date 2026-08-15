@@ -954,7 +954,7 @@ describe('published ferry schedule continuity', () => {
 
     const response = await refreshOfficialFerrySources();
 
-    expect(fetchMock).toHaveBeenCalledWith('/api/ferry-refresh', expect.objectContaining({
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringMatching(/\/api\/ferry-refresh$/), expect.objectContaining({
       method: 'POST',
     }));
     expect(response.data).toEqual(sailings);

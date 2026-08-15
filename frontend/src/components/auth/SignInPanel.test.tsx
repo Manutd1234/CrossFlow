@@ -10,7 +10,6 @@ const authMocks = vi.hoisted(() => ({
   signIn: vi.fn(),
   signInAsTestAdmin: vi.fn(),
   signOut: vi.fn(),
-  validSession: vi.fn(),
 }));
 
 vi.mock('../../services/auth', () => ({
@@ -22,7 +21,6 @@ vi.mock('../../services/auth', () => ({
   signOut: authMocks.signOut,
   supabaseConfigured: () => true,
   testAdminConfigured: () => true,
-  validSession: authMocks.validSession,
 }));
 
 import { SignInPanel } from './SignInPanel';
@@ -112,5 +110,39 @@ describe('test admin access', () => {
     expect(onSessionChange).not.toHaveBeenCalledWith(SESSION);
     expect(onIdentityChange).not.toHaveBeenCalledWith(expect.objectContaining({ role: 'driver' }));
     expect(container.textContent).toContain('configured test account is not an admin');
+  });
+});
+
+describe('signed-in account panel', () => {
+  it('shows the server-resolved role with a right-aligned primary sign-out action', () => {
+    const container = document.createElement('div');
+    document.body.append(container);
+    root = createRoot(container);
+
+    act(() => root?.render(
+      <SignInPanel
+        status={null}
+        session={{ accessToken: 'access', refreshToken: 'refresh', expiresAtMs: 1 }}
+        identity={{
+          user_id: 'user-1',
+          display_name: 'Test User',
+          role: 'driver',
+          expires_at: 1,
+          role_source: 'crossflow_profiles',
+        }}
+        onSessionChange={vi.fn()}
+        onIdentityChange={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    ));
+
+    expect(container.querySelector('.signin-role')?.textContent).toContain('driver');
+    expect(container.textContent).toContain('Role resolved by the server');
+    expect(container.textContent).not.toContain('Re-check role');
+
+    const signOut = Array.from(container.querySelectorAll('button'))
+      .find(button => button.textContent?.includes('Sign out'));
+    expect(signOut?.classList.contains('ui-button-primary')).toBe(true);
+    expect(signOut?.classList.contains('signin-panel__signout')).toBe(true);
   });
 });

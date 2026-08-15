@@ -40,7 +40,7 @@ function LoadingPanel() {
 
 const VIEW_META: Record<AppTab, { title: string; description: string }> = {
   map: {
-    title: 'Batam Congestion watch',
+    title: 'Batam Congestion Watch',
     description: 'Scan 30 photo-backed planning hotspots and move directly from an area to route planning.',
   },
   route: {
@@ -67,6 +67,7 @@ export function App() {
     () => window.sessionStorage?.getItem('crossflow.guest') === '1',
   );
   const [routes, setRoutes] = useState<CorridorRoute[]>([]);
+  const [routesLoading, setRoutesLoading] = useState(true);
   const [corridors, setCorridors] = useState<Corridor[]>(INITIAL_CORRIDORS);
   const [ferries, setFerries] = useState<FerrySchedule[]>(INITIAL_FERRIES);
   const [ferryTimetable, setFerryTimetable] = useState<FerryTimetableMetadata>(
@@ -95,7 +96,7 @@ export function App() {
   const [routeResult, setRouteResult] = useState<RouteOptimizationResult | null>(null);
   const [routeSource, setRouteSource] = useState<DataSource>('simulated');
   const [vehicleType, setVehicleType] = useState<VehicleType>('CARGO_TRUCK');
-  const [routePreference, setRoutePreference] = useState<RoutePreference>('BALANCED');
+  const routePreference: RoutePreference = 'BALANCED';
   const [weather, setWeather] = useState<number>(0);
   const [departureHour, setDepartureHour] = useState<number>(() => new Date().getHours());
   const ferryRefreshInFlightRef = useRef(false);
@@ -190,11 +191,19 @@ export function App() {
   // once. The corridor geometry is what lets the map draw the corridor the
   // Corridor tab is reporting congestion for.
   useEffect(() => {
+    let cancelled = false;
     Promise.all([fetchCorridorRoutes(), fetchRouteLocations()])
       .then(([corridorRoutes, locations]) => {
+        if (cancelled) return;
         setRoutes(corridorRoutes.data);
         setRouteLocations(locations.data);
+      })
+      .finally(() => {
+        if (!cancelled) setRoutesLoading(false);
       });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   /**
@@ -344,6 +353,7 @@ export function App() {
                 <MapView
                   corridors={corridors}
                   routes={routes}
+                  routesLoading={routesLoading}
                   trafficSnapshot={trafficSnapshot}
                   onSelectCorridor={handleSelectCorridorAndSolve}
                 />
@@ -363,7 +373,6 @@ export function App() {
                   vehicleType={vehicleType}
                   setVehicleType={setVehicleType}
                   routePreference={routePreference}
-                  setRoutePreference={setRoutePreference}
                   weather={weather}
                   setWeather={setWeather}
                   hour={departureHour}

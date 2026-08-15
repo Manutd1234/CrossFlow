@@ -4,7 +4,7 @@ import { act, useState, type ReactElement } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
 import { ROUTE_LOCATIONS } from '../../data/mockData';
-import type { RoutePreference, VehicleType } from '../../types';
+import type { VehicleType } from '../../types';
 import { RouteOptimizer } from './RouteOptimizer';
 
 vi.mock('./RoutePreviewMap', () => ({ RoutePreviewMap: () => null }));
@@ -13,7 +13,6 @@ let root: Root | undefined;
 
 function VehicleHarness() {
   const [vehicleType, setVehicleType] = useState<VehicleType>('COMMUTER');
-  const [routePreference, setRoutePreference] = useState<RoutePreference>('BALANCED');
   return (
     <RouteOptimizer
       locations={ROUTE_LOCATIONS}
@@ -27,8 +26,7 @@ function VehicleHarness() {
       setResultSource={vi.fn()}
       vehicleType={vehicleType}
       setVehicleType={setVehicleType}
-      routePreference={routePreference}
-      setRoutePreference={setRoutePreference}
+      routePreference="BALANCED"
       weather={0}
       setWeather={vi.fn()}
       hour={14}
@@ -84,16 +82,10 @@ describe('vehicle profile selection', () => {
       .toContain('bus lanes are not modelled');
   });
 
-  it('offers route preferences and adds intermediate location fields', () => {
+  it('hides route preferences and adds intermediate location fields', () => {
     const container = renderIntoDom(<VehicleHarness />);
-    // All five audited objectives stay selectable: the solver honours each of
-    // them, so hiding the control would strand a documented capability.
-    const preferences = Array.from(
-      container.querySelectorAll('.route-preference-option'),
-    ).map((option) => option.textContent);
-    expect(preferences).toHaveLength(5);
-    expect(preferences.join(' ')).toContain('Balanced');
-    expect(preferences.join(' ')).toContain('Local');
+    expect(container.querySelector('.route-preference-fieldset')).toBeNull();
+    expect(container.textContent).not.toContain('Route preference');
 
     const swap = container.querySelector<HTMLButtonElement>('.route-swap-button');
     const add = container.querySelector<HTMLButtonElement>('.route-add-stop-button');
@@ -105,5 +97,23 @@ describe('vehicle profile selection', () => {
     expect(waypoint).not.toBeNull();
     expect(waypoint?.textContent).toContain('Stop 1');
     expect(container.querySelector<HTMLButtonElement>('[aria-label="Remove stop 1"]')).not.toBeNull();
+  });
+
+  it('limits a route to three intermediate stops and five locations total', () => {
+    const container = renderIntoDom(<VehicleHarness />);
+    const add = container.querySelector<HTMLButtonElement>('.route-add-stop-button');
+
+    act(() => {
+      add?.click();
+      add?.click();
+      add?.click();
+    });
+
+    expect(container.querySelectorAll('.route-waypoint-row')).toHaveLength(3);
+    expect(add?.disabled).toBe(true);
+    expect(add?.title).toContain('5 locations total');
+
+    act(() => add?.click());
+    expect(container.querySelectorAll('.route-waypoint-row')).toHaveLength(3);
   });
 });
