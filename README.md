@@ -197,7 +197,7 @@ See [Auth Backend Roadmap](docs/AUTH_BACKEND_ROADMAP.md).
 | **Road Graph & Routing** | Committed OpenStreetMap Batam graph + stateful A\*; OSRM/OSM for online access legs | Per-leg road geometry with source-labelled continuity fallback |
 | **Multimodal Composition** | FastAPI journey composer + source-dated operator timetable snapshot | Legal terminal-pair selection, transfer timing and per-leg provenance |
 | **Data Visualization** | Recharts | Congestion trend charts & emissions reduction bars |
-| **Backend & AI Engine** | Python 3.12–3.14, FastAPI, uvicorn | High-performance REST API |
+| **Backend & AI Engine** | Python 3.12 baseline, FastAPI, uvicorn | High-performance REST API |
 | **Machine Learning** | scikit-learn Random Forest, NumPy | Synthetic cold start plus optional typed spatial retraining, empirical tree quantiles and calibration metadata |
 
 ---
@@ -221,10 +221,6 @@ See [Auth Backend Roadmap](docs/AUTH_BACKEND_ROADMAP.md).
 ### Prerequisites
 - Node.js v20.19+ (or v22.12+)
 - Python 3.12+
-
-The launcher and CI test Python 3.12+, while the pre-existing optional
-`pyproject.toml` metadata currently declares `>=3.14`; align that packaging
-metadata before building a distributable package.
 
 ### One command
 
