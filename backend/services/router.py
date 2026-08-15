@@ -10,6 +10,7 @@ being able to explain.
 """
 
 import copy
+import contextvars
 import hashlib
 import heapq
 import json
@@ -17,7 +18,8 @@ import math
 import os
 import re
 from collections import ChainMap
-from dataclasses import dataclass
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 from functools import lru_cache
 from time import monotonic
 from types import MappingProxyType
@@ -57,6 +59,82 @@ DEFAULT_ALTERNATIVE_MAX_SEARCHES = 3
 # existing expectation that ordinary routes can usually produce one option.
 DEFAULT_ALTERNATIVE_TIME_BUDGET_MS = 10_000.0
 DEFAULT_ALTERNATIVE_MAX_SETTLED_STATES = 250_000
+
+
+@dataclass
+class SearchDiagnostics:
+    """Opt-in counters for explaining where a routing search spends time.
+
+    The collector is deliberately outside every route payload and cache key.
+    Production requests pay only one context-variable lookup at search entry
+    plus guarded counter branches while a collector is active.
+    """
+
+    searches_started: int = 0
+    searches_succeeded: int = 0
+    searches_failed: int = 0
+    deadline_cutoffs: int = 0
+    settled_limit_cutoffs: int = 0
+    heap_pushes: int = 0
+    heap_pops: int = 0
+    settled_states: int = 0
+    edge_eligibility_decisions: int = 0
+    node_eligibility_decisions: int = 0
+    eligible_edges: int = 0
+    rejected_edges: int = 0
+    eligible_nodes: int = 0
+    rejected_nodes: int = 0
+    edge_cost_evaluations: int = 0
+    heuristic_evaluations: int = 0
+    alt_index_searches: int = 0
+    alt_fallback_searches: int = 0
+    alt_terms_evaluated: int = 0
+    alt_fallback_reasons: Dict[str, int] = field(default_factory=dict)
+    alternative_attempts: int = 0
+    alternative_accepted: int = 0
+    alternative_rejected_duplicate: int = 0
+    alternative_rejected_similar: int = 0
+    alternative_rejected_quality: int = 0
+
+    def as_dict(self) -> Dict[str, Any]:
+        """Return stable JSON-friendly counter names."""
+        counters = {
+            "schema_version": 1,
+            **{
+                field_name: int(value)
+                for field_name, value in self.__dict__.items()
+                if field_name != "alt_fallback_reasons"
+            },
+        }
+        counters["alt_fallback_reasons"] = dict(self.alt_fallback_reasons)
+        return counters
+
+
+_ACTIVE_SEARCH_DIAGNOSTICS: contextvars.ContextVar[
+    Optional[SearchDiagnostics]
+] = contextvars.ContextVar(
+    "crossflow_active_search_diagnostics", default=None,
+)
+
+
+@contextmanager
+def search_diagnostics() -> SearchDiagnostics:
+    """Collect routing counters for the enclosed route call(s).
+
+    This is opt-in and intentionally does not alter route payloads, cache
+    identity, or search ordering. The returned collector is safe to serialize
+    with :meth:`SearchDiagnostics.as_dict` after the context exits.
+    """
+    collector = SearchDiagnostics()
+    token = _ACTIVE_SEARCH_DIAGNOSTICS.set(collector)
+    try:
+        yield collector
+    finally:
+        _ACTIVE_SEARCH_DIAGNOSTICS.reset(token)
+
+
+# A descriptive alias for callers that prefer the routing-specific name.
+routing_diagnostics = search_diagnostics
 
 
 def _bounded_int_setting(
@@ -2066,6 +2144,9 @@ def astar_detailed(
     components are nonnegative. It therefore remains admissible for every
     preference, including with turn-dependent state.
     """
+    diagnostics = _ACTIVE_SEARCH_DIAGNOSTICS.get()
+    if diagnostics is not None:
+        diagnostics.searches_started += 1
     profile = vehicle_profile(vehicle_type)
     policy = vehicle_routing_policy(profile)
     preference = _validated_route_preference(route_preference)
@@ -2094,8 +2175,12 @@ def astar_detailed(
                 "edge_penalties must map integer node pairs to finite values >= 1."
             )
     if src not in road_adjacency or dst not in NODES:
+        if diagnostics is not None:
+            diagnostics.searches_failed += 1
         return None
     if src == dst:
+        if diagnostics is not None:
+            diagnostics.searches_succeeded += 1
         return PathResult([src], [], 0.0, 0.0)
 
     # `destination` is an endpoint exception, not a cheaper through-road class.
@@ -2107,15 +2192,33 @@ def astar_detailed(
     ).core
     source_needs_destination_access = src not in strict_core
     target_needs_destination_access = dst not in strict_core
-    if not node_traversal_decision(
+    source_decision = node_traversal_decision(
         src,
         profile,
         allow_destination_access=source_needs_destination_access,
-    ).allowed or not node_traversal_decision(
+    )
+    if diagnostics is not None:
+        diagnostics.node_eligibility_decisions += 1
+        if source_decision.allowed:
+            diagnostics.eligible_nodes += 1
+        else:
+            diagnostics.rejected_nodes += 1
+    if not source_decision.allowed:
+        if diagnostics is not None:
+            diagnostics.searches_failed += 1
+        return None
+    target_decision = node_traversal_decision(
         dst,
         profile,
         allow_destination_access=target_needs_destination_access,
-    ).allowed:
+    )
+    if diagnostics is not None:
+        diagnostics.node_eligibility_decisions += 1
+        diagnostics.eligible_nodes += int(target_decision.allowed)
+        diagnostics.rejected_nodes += int(not target_decision.allowed)
+    if not target_decision.allowed:
+        if diagnostics is not None:
+            diagnostics.searches_failed += 1
         return None
 
     # Most searches can share the immutable vehicle-filtered view and avoid
@@ -2180,8 +2283,12 @@ def astar_detailed(
     )
 
     def heuristic(node: int) -> float:
+        if diagnostics is not None:
+            diagnostics.heuristic_evaluations += 1
         straight_distance_m = haversine_m(NODES[node], goal)
         if alt_index is not None:
+            if diagnostics is not None:
+                diagnostics.alt_terms_evaluated += 2 * len(alt_index.landmarks)
             straight_distance_m = max(
                 straight_distance_m,
                 alt_index.distance_lower_bound(node, dst),
@@ -2203,6 +2310,21 @@ def astar_detailed(
     # to a much cheaper onward turn and is therefore not correct for this model.
     start_state = (src, -1, -1)
     open_heap = [(heuristic(src), 0.0, start_state)]
+    if diagnostics is not None:
+        diagnostics.heap_pushes += 1
+        if alt_index is not None:
+            diagnostics.alt_index_searches += 1
+        else:
+            diagnostics.alt_fallback_searches += 1
+            fallback_reason = (
+                "approved_overrides"
+                if approved_override_snapshot is not None
+                and approved_override_snapshot.overrides
+                else "index_unavailable"
+            )
+            diagnostics.alt_fallback_reasons[fallback_reason] = (
+                diagnostics.alt_fallback_reasons.get(fallback_reason, 0) + 1
+            )
     came_from: Dict[Tuple[int, int, int], Tuple[Tuple[int, int, int], RoadEdge]] = {}
     incoming_edge: Dict[Tuple[int, int, int], RoadEdge] = {}
     best_g: Dict[Tuple[int, int, int], float] = {start_state: 0.0}
@@ -2213,8 +2335,13 @@ def astar_detailed(
             deadline_monotonic is not None
             and monotonic() >= deadline_monotonic
         ):
+            if diagnostics is not None:
+                diagnostics.deadline_cutoffs += 1
+                diagnostics.searches_failed += 1
             return None
         _, g, state = heapq.heappop(open_heap)
+        if diagnostics is not None:
+            diagnostics.heap_pops += 1
         if state in closed:
             continue
         node, previous_source_raw, _ = state
@@ -2227,6 +2354,8 @@ def astar_detailed(
                 states.append(previous)
             states.reverse()
             chosen_edges.reverse()
+            if diagnostics is not None:
+                diagnostics.searches_succeeded += 1
             return PathResult(
                 nodes=[item[0] for item in states],
                 edges=chosen_edges,
@@ -2234,10 +2363,15 @@ def astar_detailed(
                 search_cost_s=g,
             )
         closed.add(state)
+        if diagnostics is not None:
+            diagnostics.settled_states += 1
         if (
             max_settled_states is not None
             and len(closed) >= max(0, int(max_settled_states))
         ):
+            if diagnostics is not None:
+                diagnostics.settled_limit_cutoffs += 1
+                diagnostics.searches_failed += 1
             return None
         previous_source = previous_source_raw if previous_source_raw >= 0 else None
         previous_edge = incoming_edge.get(state)
@@ -2247,12 +2381,21 @@ def astar_detailed(
                 deadline_monotonic is not None
                 and monotonic() >= deadline_monotonic
             ):
+                if diagnostics is not None:
+                    diagnostics.deadline_cutoffs += 1
+                    diagnostics.searches_failed += 1
                 return None
             nxt = edge.target
             if _edge_key(node, edge) in banned_edges:
                 continue
             if not uses_filtered_view:
                 edge_decision = edge_traversal_decision(edge, profile)
+                if diagnostics is not None:
+                    diagnostics.edge_eligibility_decisions += 1
+                    if edge_decision.allowed:
+                        diagnostics.eligible_edges += 1
+                    else:
+                        diagnostics.rejected_edges += 1
                 if not edge_decision.allowed:
                     edge_decision = edge_traversal_decision(
                         edge,
@@ -2262,14 +2405,32 @@ def astar_detailed(
                             and is_endpoint_access_node(nxt)
                         ),
                     )
+                    if diagnostics is not None:
+                        diagnostics.edge_eligibility_decisions += 1
+                        if edge_decision.allowed:
+                            diagnostics.eligible_edges += 1
+                        else:
+                            diagnostics.rejected_edges += 1
                 if not edge_decision.allowed:
                     continue
                 node_decision = node_traversal_decision(nxt, profile)
+                if diagnostics is not None:
+                    diagnostics.node_eligibility_decisions += 1
+                    if node_decision.allowed:
+                        diagnostics.eligible_nodes += 1
+                    else:
+                        diagnostics.rejected_nodes += 1
                 if not node_decision.allowed:
                     node_decision = node_traversal_decision(
                         nxt, profile,
                         allow_destination_access=is_endpoint_access_node(nxt),
                     )
+                    if diagnostics is not None:
+                        diagnostics.node_eligibility_decisions += 1
+                        if node_decision.allowed:
+                            diagnostics.eligible_nodes += 1
+                        else:
+                            diagnostics.rejected_nodes += 1
                 if not node_decision.allowed:
                     continue
             next_state = (nxt, node, edge.road_index)
@@ -2287,6 +2448,8 @@ def astar_detailed(
                 static_features=static_feature_map,
                 eligible_adjacency=(road_adjacency if uses_filtered_view else None),
             )
+            if diagnostics is not None:
+                diagnostics.edge_cost_evaluations += 1
             # Alternative-generation and compatibility avoidance are search
             # penalties only. They never leak into distance or published ETA.
             cost = _edge_objective_cost_s(
@@ -2302,7 +2465,11 @@ def astar_detailed(
                 heapq.heappush(
                     open_heap, (tentative + heuristic(nxt), tentative, next_state),
                 )
+                if diagnostics is not None:
+                    diagnostics.heap_pushes += 1
 
+    if diagnostics is not None:
+        diagnostics.searches_failed += 1
     return None
 
 
@@ -2753,6 +2920,7 @@ def alternative_paths(
 
     attempted_searches = 0
     similar_rejections = 0
+    diagnostics = _ACTIVE_SEARCH_DIAGNOSTICS.get()
     for penalty in penalty_schedule:
         if attempted_searches >= max_searches or monotonic() >= deadline:
             break
@@ -2765,6 +2933,8 @@ def alternative_paths(
             for source, edge in zip(accepted_route.nodes, accepted_route.edges)
         }
         attempted_searches += 1
+        if diagnostics is not None:
+            diagnostics.alternative_attempts += 1
         candidate = astar_detailed(
             primary.nodes[0], primary.nodes[-1],
             avoid_nodes=avoid_nodes,
@@ -2787,9 +2957,13 @@ def alternative_paths(
             # same synchronous budget.
             break
         if tuple(candidate.nodes) in seen_paths:
+            if diagnostics is not None:
+                diagnostics.alternative_rejected_duplicate += 1
             continue
         seen_paths.add(tuple(candidate.nodes))
         if candidate.distance_m > primary.distance_m * 1.65:
+            if diagnostics is not None:
+                diagnostics.alternative_rejected_quality += 1
             continue
         candidate_generalized_s = path_cost_breakdown(
             candidate, profile, congestion_scores=congestion_scores,
@@ -2798,10 +2972,14 @@ def alternative_paths(
             learning_snapshot=learning_snapshot,
         )["generalized_cost_s"]
         if candidate_generalized_s > primary_generalized_s * 1.85:
+            if diagnostics is not None:
+                diagnostics.alternative_rejected_quality += 1
             continue
         overlaps = [overlap_ratio(candidate, route) for route in accepted]
         if any(overlap > 0.82 for overlap in overlaps):
             similar_rejections += 1
+            if diagnostics is not None:
+                diagnostics.alternative_rejected_similar += 1
             # Once two successive bounded searches produce only near-duplicate
             # corridors, further penalties are unlikely to yield a useful
             # option. Stopping here only reduces optional alternatives; it can
@@ -2812,14 +2990,22 @@ def alternative_paths(
         similar_rejections = 0
         maneuver_count, turn_count, short_turn_count, _ = route_quality(candidate)
         if maneuver_count > max(primary_maneuvers + 10, math.ceil(primary_maneuvers * 1.75)):
+            if diagnostics is not None:
+                diagnostics.alternative_rejected_quality += 1
             continue
         if turn_count > max(primary_turns + 8, primary_turns * 2):
+            if diagnostics is not None:
+                diagnostics.alternative_rejected_quality += 1
             continue
         if short_turn_count > max(primary_short_turns + 4, primary_short_turns * 3):
+            if diagnostics is not None:
+                diagnostics.alternative_rejected_quality += 1
             continue
         primary_overlap = overlaps[0]
         candidates.append((candidate, round(primary_overlap, 3)))
         accepted.append(candidate)
+        if diagnostics is not None:
+            diagnostics.alternative_accepted += 1
         if len(candidates) >= limit:
             break
 

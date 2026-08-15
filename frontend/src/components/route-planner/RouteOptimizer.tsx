@@ -7,6 +7,7 @@ import type {
   RouteLocation,
   RouteOptimizationResult,
   RoutePreference,
+  RouteScheduleOptions,
   VehicleType,
 } from '../../types';
 import {
@@ -157,6 +158,15 @@ function formatManeuverDistance(distanceM: number): string {
   return `${(distanceM / 1000).toFixed(1)} km`;
 }
 
+/** Datetime-local is intentionally treated as Batam wall time, independent of
+ * the browser's own timezone. The route API requires an explicit offset. */
+function scheduledInputToIso(value: string): string | undefined {
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(trimmed)) return undefined;
+  return `${trimmed}:00+07:00`;
+}
+
 export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
   locations, originId, setOriginId, destinationId, setDestinationId,
   result, setResult, resultSource, setResultSource,
@@ -169,6 +179,8 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
   const [routeBenchmark, setRouteBenchmark] = useState<RouteBenchmarkResult | null>(null);
   const [benchmarkError, setBenchmarkError] = useState<string | null>(null);
   const [benchmarkLoading, setBenchmarkLoading] = useState(false);
+  const [scheduleMode, setScheduleMode] = useState<'departure' | 'arrive_by'>('departure');
+  const [scheduleAt, setScheduleAt] = useState('');
   const [activeResultTab, setActiveResultTab] = useState<RouteResultTab>('summary');
   const [vehicleMenuOpen, setVehicleMenuOpen] = useState(false);
   const optimizationRequestRef = useRef(0);
@@ -296,6 +308,12 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
     setSelectedRouteId(PRIMARY_ROUTE_ID);
     setLoading(true);
     setRouteError(null);
+    const scheduledIso = scheduledInputToIso(scheduleAt);
+    const schedule: RouteScheduleOptions | undefined = scheduledIso
+      ? scheduleMode === 'departure'
+        ? { departure_at: scheduledIso }
+        : { arrive_by: scheduledIso }
+      : undefined;
     try {
       let res;
       let requestedOrigin: FreeLocation;
@@ -318,6 +336,7 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
           hour,
           weather,
           routePreference,
+          schedule,
         );
       } else {
         if (!freeOrigin || !freeDest) return;
@@ -330,6 +349,7 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
           hour,
           weather,
           routePreference,
+          schedule,
         );
       }
       if (requestId !== optimizationRequestRef.current) return;
@@ -784,8 +804,40 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
         </fieldset>
 
         <div className="route-departure-time-control">
+          <div className="route-schedule-mode-row">
+            <label htmlFor="route-schedule-mode" className="route-departure-time-label">Schedule by</label>
+            <select
+              id="route-schedule-mode"
+              className="route-schedule-mode-select"
+              value={scheduleMode}
+              onChange={(event) => {
+                setScheduleMode(event.target.value as 'departure' | 'arrive_by');
+                invalidateResult();
+              }}
+            >
+              <option value="departure">Depart at</option>
+              <option value="arrive_by">Arrive by</option>
+            </select>
+          </div>
+          <label htmlFor="route-schedule-at" className="route-schedule-at-label">
+            {scheduleMode === 'departure' ? 'Optional departure date and time' : 'Optional arrival deadline'}
+          </label>
+          <input
+            id="route-schedule-at"
+            type="datetime-local"
+            value={scheduleAt}
+            onChange={(event) => {
+              setScheduleAt(event.target.value);
+              invalidateResult();
+            }}
+            className="route-schedule-at-input"
+            aria-describedby="route-schedule-timezone"
+          />
+          <p id="route-schedule-timezone" className="route-schedule-timezone">
+            Batam local time (UTC+07:00). Leave blank to use the hour below.
+          </p>
           <div className="route-departure-time-header">
-            <label htmlFor="route-departure-hour" className="route-departure-time-label">Departure hour</label>
+            <label htmlFor="route-departure-hour" className="route-departure-time-label">Fallback departure hour</label>
             <output htmlFor="route-departure-hour" className="route-departure-time-value">{String(hour).padStart(2, '0')}:00</output>
           </div>
           <input
@@ -872,6 +924,11 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
                 <h2 className="route-result-title">
                   {resultOriginName} <span aria-hidden="true" className="route-result-direction-arrow">→</span> {resultDestinationName}
                 </h2>
+                {result.route_id ? (
+                  <span className="route-result-route-id" title={result.route_id}>
+                    Route code <code>{result.route_code ?? result.route_id.slice(0, 7)}</code>
+                  </span>
+                ) : null}
               </div>
               <div className="route-result-actions">
                 {googleRouteBenchmarkEnabled() && resultOrigin && resultDestination ? (

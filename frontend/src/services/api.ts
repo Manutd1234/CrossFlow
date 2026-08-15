@@ -4,6 +4,7 @@ import {
   FetchedFerryRefresh, FetchedFerrySchedule, FreeLocation, GeocodedLocation, HistoricalProfile,
   LiveTrafficData, ModelMetrics, NavigationData, OperationsSummary, PortStatus, RouteLocation,
   RouteBenchmarkResult, RouteEndpointSnapshot, RouteOptimizationResult, RoutePreference,
+  RouteScheduleOptions,
   RoutingCostBreakdown, VehicleType,
 } from '../types';
 
@@ -37,6 +38,42 @@ const CORRIDOR_TIMEOUT_MS = 6000;
 const ROUTE_TIMEOUT_MS = 15000;
 const FERRY_REFRESH_TIMEOUT_MS = 20_000;
 const FERRY_TERMINAL_MATCH_KM = 0.5;
+
+/** Serialize only the new scheduling fields that are actually selected. */
+function scheduleRequestFields(schedule?: RouteScheduleOptions): RouteScheduleOptions {
+  if (!schedule) return {};
+  const departureAt = schedule.departure_at?.trim();
+  const arriveBy = schedule.arrive_by?.trim();
+  // The backend enforces mutual exclusivity too; keeping this guard here
+  // avoids sending an ambiguous request if a caller changes modes mid-flight.
+  if (departureAt) return { departure_at: departureAt };
+  if (arriveBy) return { arrive_by: arriveBy };
+  return {};
+}
+
+function hourFromSchedule(schedule?: RouteScheduleOptions): number | undefined {
+  const value = schedule?.departure_at;
+  if (!value) return undefined;
+  const match = value.match(/T(\d{2})(?::\d{2})?/);
+  if (!match) return undefined;
+  const hour = Number(match[1]);
+  return Number.isInteger(hour) && hour >= 0 && hour <= 23 ? hour : undefined;
+}
+
+function requireServerSchedule(schedule?: RouteScheduleOptions): void {
+  if (schedule?.arrive_by) {
+    throw new ApiRequestError(
+      'Arrive-by planning requires the scheduling API; it is unavailable right now.',
+      503,
+    );
+  }
+  if (schedule?.departure_at) {
+    throw new ApiRequestError(
+      'Exact departure-time planning requires the scheduling API; it is unavailable right now.',
+      503,
+    );
+  }
+}
 
 export class ApiRequestError extends Error {
   readonly status: number;
@@ -596,6 +633,7 @@ export async function requestRouteOptimization(
   hour: number = 14,
   weather: number = 0,
   routePreference: RoutePreference = 'BALANCED',
+  schedule?: RouteScheduleOptions,
 ): Promise<Fetched<RouteOptimizationResult>> {
   const origin = ROUTE_LOCATIONS.find(location => location.id === originId) ?? ROUTE_LOCATIONS[0];
   const destination = ROUTE_LOCATIONS.find(location => location.id === destinationId)
@@ -607,11 +645,12 @@ export async function requestRouteOptimization(
   const corridorIdx = seededCorridor
     ? (CORRIDOR_INDEX[seededCorridor.id] ?? 0)
     : Math.abs(Math.round((origin.lat * 1000) + (origin.lng * 100))) % 5;
+  const effectiveHour = hourFromSchedule(schedule) ?? hour;
   const roadHedge = bundledRoadHedge(
     [origin.lat, origin.lng],
     [destination.lat, destination.lng],
     destination.name,
-    browserRoutingContext(vehicleType, hour, weather, corridorIdx, routePreference),
+    browserRoutingContext(vehicleType, effectiveHour, weather, corridorIdx, routePreference),
   );
   const backendAbort = new AbortController();
   const sources = await raceRoadRouteSources(
@@ -624,7 +663,8 @@ export async function requestRouteOptimization(
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           origin_id: originId, destination_id: destinationId,
-          vehicle_type: vehicleType, hour, weather, route_preference: routePreference,
+          vehicle_type: vehicleType, hour: effectiveHour, weather,
+          route_preference: routePreference, ...scheduleRequestFields(schedule),
         }),
       },
       true,
@@ -636,13 +676,14 @@ export async function requestRouteOptimization(
   if (sources.payload) {
     return wrap(sources.payload, sources.payload);
   }
-  const fallback = offlineOptimize(originId, destinationId, vehicleType, hour, weather);
+  requireServerSchedule(schedule);
+  const fallback = offlineOptimize(originId, destinationId, vehicleType, effectiveHour, weather);
   if (!sources.roadPlan) throw roadRoutingUnavailable();
   return wrap(null, applyBundledRoadPlan(
     fallback,
     sources.roadPlan,
     vehicleType,
-    hour,
+    effectiveHour,
     weather,
     corridorIdx,
     routePreference,
@@ -1292,6 +1333,7 @@ export async function requestFreeRouteOptimization(
   hour: number = 14,
   weather: number = 0,
   routePreference: RoutePreference = 'BALANCED',
+  schedule?: RouteScheduleOptions,
 ): Promise<Fetched<RouteOptimizationResult>> {
   const originRegion = locationRegion(origin.lat, origin.lng);
   const destinationRegion = locationRegion(destination.lat, destination.lng);
@@ -1305,6 +1347,7 @@ export async function requestFreeRouteOptimization(
     throw new ApiRequestError(PASSENGER_FERRY_TRUCK_MESSAGE, 400);
   }
   const corridorIdx = Math.abs(Math.round((origin.lat * 1000 + origin.lng * 100))) % 5;
+  const effectiveHour = hourFromSchedule(schedule) ?? hour;
   const requestBody = JSON.stringify({
     origin_lat: origin.lat,
     origin_lng: origin.lng,
@@ -1313,9 +1356,10 @@ export async function requestFreeRouteOptimization(
     origin_name: origin.display_name,
     destination_name: destination.display_name,
     vehicle_type: vehicleType,
-    hour,
+    hour: effectiveHour,
     weather,
     route_preference: routePreference,
+    ...scheduleRequestFields(schedule),
   });
 
   // The bundled graph covers Batam only. Singapore local and cross-border
@@ -1333,8 +1377,9 @@ export async function requestFreeRouteOptimization(
       true,
     ).then(validatedRoadPayload);
     if (payload) return wrap(payload, payload);
+    requireServerSchedule(schedule);
     return wrap(null, offlineCrossBorderOptimize(
-      origin, destination, vehicleType, hour, routePreference,
+      origin, destination, vehicleType, effectiveHour, routePreference,
     ));
   }
 
@@ -1342,7 +1387,7 @@ export async function requestFreeRouteOptimization(
     [origin.lat, origin.lng],
     [destination.lat, destination.lng],
     destination.display_name,
-    browserRoutingContext(vehicleType, hour, weather, corridorIdx, routePreference),
+    browserRoutingContext(vehicleType, effectiveHour, weather, corridorIdx, routePreference),
   );
   const backendAbort = new AbortController();
   const sources = await raceRoadRouteSources(
@@ -1363,17 +1408,18 @@ export async function requestFreeRouteOptimization(
   if (sources.payload) {
     return wrap(sources.payload, sources.payload);
   }
-  const fallback = offlineOptimizeFree(origin, destination, vehicleType, hour, weather);
+  requireServerSchedule(schedule);
+  const fallback = offlineOptimizeFree(origin, destination, vehicleType, effectiveHour, weather);
   if (!sources.roadPlan) {
     return wrap(null, offlineCrossBorderOptimize(
-      origin, destination, vehicleType, hour, routePreference,
+      origin, destination, vehicleType, effectiveHour, routePreference,
     ));
   }
   return wrap(null, applyBundledRoadPlan(
     fallback,
     sources.roadPlan,
     vehicleType,
-    hour,
+    effectiveHour,
     weather,
     corridorIdx,
     routePreference,

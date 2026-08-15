@@ -620,7 +620,14 @@ def _approved_overrides_used_by_legs(
     return [selected[key] for key in sorted(selected)]
 
 
-def _planned_departure(hour: int, now: datetime, origin_region: str) -> datetime:
+def _planned_departure(
+    hour: int,
+    now: datetime,
+    origin_region: str,
+    departure_at: Optional[datetime] = None,
+) -> datetime:
+    if departure_at is not None:
+        return departure_at.astimezone(_REGION_TIMEZONES[origin_region])
     local = now.astimezone(_REGION_TIMEZONES[origin_region])
     planned = local.replace(hour=hour, minute=0, second=0, microsecond=0)
     return planned + timedelta(days=1) if planned < local else planned
@@ -640,6 +647,7 @@ def optimize_journey(
     route_preference: str = "BALANCED",
     schedule_verified_at: Optional[str] = None,
     approved_override_snapshot: Optional[ApprovedGraphOverrideSnapshot] = None,
+    departure_at: Optional[datetime] = None,
 ) -> Dict[str, Any]:
     """Compose an SG/Batam local or cross-border journey."""
     del weather  # Cross-border traffic is not inferred from the Batam-only model.
@@ -657,7 +665,7 @@ def optimize_journey(
     destination_display = destination_name or (
         f"{destination_lat:.5f}, {destination_lng:.5f}"
     )
-    departure = _planned_departure(hour, now, origin_region)
+    departure = _planned_departure(hour, now, origin_region, departure_at)
     legs: List[Dict[str, Any]] = []
     next_ferries: List[Dict[str, Any]] = []
     ferry_note: Optional[str] = None
@@ -734,6 +742,9 @@ def optimize_journey(
     road_co2 = round(road_distance_km * profile.emissions_kg_per_km, 2)
     navigation = _combine_navigation(legs)
 
+    estimated_arrival = (
+        departure + timedelta(minutes=total_eta_mins)
+    ).astimezone(_REGION_TIMEZONES[destination_region])
     result: Dict[str, Any] = {
         "route_type": route_type,
         "corridor": {
@@ -765,6 +776,7 @@ def optimize_journey(
             "status": "NOT_MODELLED", "risk_level": "UNKNOWN", "trend": "STABLE",
         },
         "estimated_travel_time_mins": movement_mins,
+        "estimated_arrival": estimated_arrival.isoformat(timespec="seconds"),
         "customs_buffer_mins": round(terminal_wait_mins, 1),
         "total_eta_mins": total_eta_mins,
         "road_distance_km": road_distance_km,
@@ -806,6 +818,14 @@ def optimize_journey(
     }
     if ferry_note:
         result["ferry_connection_note"] = ferry_note
+    result["scheduling"] = {
+        "mode": "DEPART_AT" if departure_at is not None else "HOUR",
+        "requested_departure_at": (
+            departure.isoformat(timespec="seconds") if departure_at else None
+        ),
+        "requested_arrive_by": None,
+        "deadline_slack_mins": None,
+    }
     approved_overrides_used = _approved_overrides_used_by_legs(legs)
     if approved_overrides_used:
         result["approved_graph_overrides_used"] = approved_overrides_used

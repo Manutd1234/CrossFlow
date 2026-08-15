@@ -16,15 +16,17 @@ if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
 
-from fastapi import FastAPI, Header, HTTPException, Query, Response
+from fastapi import FastAPI, Header, HTTPException, Path, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from auth.routes import router as auth_router
 from models.congestion_model import forecaster
 from services import clock, ferry_freshness_store, ferry_refresh, ferry_schedule, router
 from services import geocoder, google_routes_benchmark, live_traffic, historical_store
 from services import routing_intelligence_store, shortcut_ingestion
+from services import route_store
+from services.route_identity import route_id as make_route_id, short_route_code
 from services.service_contracts import ApprovedGraphOverrideSnapshot
 from services.traffic_observations import (
     ObservationValidationError,
@@ -60,6 +62,7 @@ _SHORTCUT_POLICY_CACHE_KEY: Optional[str] = None
 _SHORTCUT_POLICY_CACHE: Optional[shortcut_ingestion.SourcePolicy] = None
 _SHORTCUT_POLICY_ERROR: Optional[str] = None
 _SHORTCUT_GRAPH_INDEX: Optional[shortcut_ingestion.GraphIndex] = None
+_ROUTE_STORE = route_store.DEFAULT_ROUTE_STORE
 
 app = FastAPI(
 
@@ -106,18 +109,111 @@ TrafficRoadClass = Literal[
 ]
 
 
+def _validate_schedule_fields(
+    departure_at: Optional[datetime],
+    arrive_by: Optional[datetime],
+) -> None:
+    """Validate the mutually exclusive full-timestamp scheduling inputs."""
+    if departure_at is not None and arrive_by is not None:
+        raise ValueError("Provide either departure_at or arrive_by, not both.")
+    for field_name, value in (("departure_at", departure_at), ("arrive_by", arrive_by)):
+        if value is not None and value.tzinfo is None:
+            raise ValueError(f"{field_name} must include a timezone offset.")
+
+
 class RouteRequest(BaseModel):
+    """Named-corridor route request.
+
+    ``departure_at`` and ``arrive_by`` are timezone-aware ISO-8601 timestamps
+    and are mutually exclusive.  ``hour`` remains available as the legacy
+    local-hour fallback when neither full timestamp is supplied.
+    """
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "corridor_id": "batam-centre-to-nongsa",
+                    "vehicle_type": "LIGHT_TRUCK",
+                    "departure_at": "2026-08-15T08:00:00+07:00",
+                    "weather": 0,
+                    "route_preference": "BALANCED",
+                },
+                {
+                    "corridor_id": "batam-centre-to-nongsa",
+                    "vehicle_type": "LIGHT_TRUCK",
+                    "arrive_by": "2026-08-15T10:00:00+07:00",
+                },
+            ],
+        },
+    )
+
     corridor_id: Optional[str] = None
     origin_id: Optional[str] = None
     destination_id: Optional[str] = None
     vehicle_type: VehicleType
-    hour: Optional[int] = Field(default=14, ge=0, le=23)
+    hour: Optional[int] = Field(
+        default=14,
+        ge=0,
+        le=23,
+        description=(
+            "Legacy local departure hour (0-23). Used only when departure_at "
+            "and arrive_by are omitted."
+        ),
+        examples=[14],
+    )
+    departure_at: Optional[datetime] = Field(
+        default=None,
+        description=(
+            "Requested departure as a timezone-aware ISO-8601 timestamp. "
+            "Mutually exclusive with arrive_by."
+        ),
+        examples=["2026-08-15T08:00:00+07:00"],
+    )
+    arrive_by: Optional[datetime] = Field(
+        default=None,
+        description=(
+            "Required arrival deadline as a timezone-aware ISO-8601 timestamp. "
+            "The API searches for the latest feasible departure and is mutually "
+            "exclusive with departure_at."
+        ),
+        examples=["2026-08-15T10:00:00+07:00"],
+    )
     weather: Optional[int] = Field(default=0, ge=0, le=2)
     route_preference: RoutePreference = "BALANCED"
+
+    @model_validator(mode="after")
+    def validate_schedule(self):
+        _validate_schedule_fields(self.departure_at, self.arrive_by)
+        return self
 
 
 class FreeRouteRequest(BaseModel):
     """Free-form route request within Singapore and/or Batam."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "origin_lat": 1.1308,
+                    "origin_lng": 104.053,
+                    "destination_lat": 1.145,
+                    "destination_lng": 104.02,
+                    "vehicle_type": "LIGHT_TRUCK",
+                    "departure_at": "2026-08-15T08:00:00+07:00",
+                },
+                {
+                    "origin_lat": 1.29,
+                    "origin_lng": 103.85,
+                    "destination_lat": 1.13,
+                    "destination_lng": 104.05,
+                    "vehicle_type": "COMMUTER",
+                    "arrive_by": "2026-08-15T12:00:00+08:00",
+                },
+            ],
+        },
+    )
+
     origin_lat: float = Field(ge=-90, le=90)
     origin_lng: float = Field(ge=-180, le=180)
     destination_lat: float = Field(ge=-90, le=90)
@@ -125,9 +221,40 @@ class FreeRouteRequest(BaseModel):
     origin_name: Optional[str] = Field(default=None, max_length=200)
     destination_name: Optional[str] = Field(default=None, max_length=200)
     vehicle_type: VehicleType = "COMMUTER"
-    hour: Optional[int] = Field(default=14, ge=0, le=23)
+    hour: Optional[int] = Field(
+        default=14,
+        ge=0,
+        le=23,
+        description=(
+            "Legacy local departure hour (0-23). Used only when departure_at "
+            "and arrive_by are omitted."
+        ),
+        examples=[14],
+    )
+    departure_at: Optional[datetime] = Field(
+        default=None,
+        description=(
+            "Requested departure as a timezone-aware ISO-8601 timestamp. "
+            "Mutually exclusive with arrive_by."
+        ),
+        examples=["2026-08-15T08:00:00+07:00"],
+    )
+    arrive_by: Optional[datetime] = Field(
+        default=None,
+        description=(
+            "Required arrival deadline as a timezone-aware ISO-8601 timestamp. "
+            "The API searches for the latest feasible departure and is mutually "
+            "exclusive with departure_at."
+        ),
+        examples=["2026-08-15T12:00:00+08:00"],
+    )
     weather: Optional[int] = Field(default=0, ge=0, le=2)
     route_preference: RoutePreference = "BALANCED"
+
+    @model_validator(mode="after")
+    def validate_schedule(self):
+        _validate_schedule_fields(self.departure_at, self.arrive_by)
+        return self
 
 
 class RouteStop(BaseModel):
@@ -146,16 +273,224 @@ class RouteStop(BaseModel):
 class MultiStopRouteRequest(BaseModel):
     """Ordered stops for one scheduled multi-destination journey."""
 
-    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    model_config = ConfigDict(
+        extra="forbid",
+        allow_inf_nan=False,
+        json_schema_extra={
+            "examples": [
+                {
+                    "stops": [
+                        {"lat": 1.1308, "lng": 104.053, "name": "Origin"},
+                        {
+                            "lat": 1.145,
+                            "lng": 104.02,
+                            "name": "Checkpoint 1",
+                            "dwell_mins": 15,
+                        },
+                        {"lat": 1.11, "lng": 104.06, "name": "Destination"},
+                    ],
+                    "vehicle_type": "LIGHT_TRUCK",
+                    "departure_at": "2026-08-15T08:00:00+07:00",
+                },
+                {
+                    "stops": [
+                        {"lat": 1.1308, "lng": 104.053, "name": "Origin"},
+                        {"lat": 1.145, "lng": 104.02, "name": "Checkpoint 1"},
+                        {"lat": 1.11, "lng": 104.06, "name": "Destination"},
+                    ],
+                    "arrive_by": "2026-08-15T12:00:00+07:00",
+                },
+            ],
+        },
+    )
 
     stops: List[RouteStop] = Field(min_length=3, max_length=MAX_MULTI_STOP_COUNT)
     vehicle_type: VehicleType = "COMMUTER"
-    hour: Optional[int] = Field(default=14, ge=0, le=23)
+    hour: Optional[int] = Field(
+        default=14,
+        ge=0,
+        le=23,
+        description=(
+            "Legacy local departure hour (0-23). Used only when departure_at "
+            "and arrive_by are omitted."
+        ),
+        examples=[14],
+    )
+    departure_at: Optional[datetime] = Field(
+        default=None,
+        description=(
+            "Requested departure as a timezone-aware ISO-8601 timestamp. "
+            "Mutually exclusive with arrive_by."
+        ),
+        examples=["2026-08-15T08:00:00+07:00"],
+    )
+    arrive_by: Optional[datetime] = Field(
+        default=None,
+        description=(
+            "Required arrival deadline as a timezone-aware ISO-8601 timestamp. "
+            "The API searches for the latest feasible departure and is mutually "
+            "exclusive with departure_at."
+        ),
+        examples=["2026-08-15T12:00:00+07:00"],
+    )
     weather: Optional[int] = Field(default=0, ge=0, le=2)
     route_preference: RoutePreference = "BALANCED"
     # Off by default: the requested order is the caller's itinerary, and
     # reordering it silently would change where the driver actually goes.
     optimize_order: bool = False
+
+    @model_validator(mode="after")
+    def validate_schedule(self):
+        _validate_schedule_fields(self.departure_at, self.arrive_by)
+        return self
+
+
+class RouteSchedulingMetadata(BaseModel):
+    """Scheduling interpretation returned with every calculated route."""
+
+    model_config = ConfigDict(extra="allow", allow_inf_nan=False)
+
+    mode: Optional[str] = Field(
+        default=None,
+        description=(
+            "Scheduling mode: HOUR for the legacy hour input, DEPART_AT for an "
+            "explicit departure, or ARRIVE_BY for a deadline search."
+        ),
+    )
+    requested_departure_at: Optional[datetime] = Field(
+        default=None,
+        description="Normalized requested departure timestamp, when supplied.",
+    )
+    requested_arrive_by: Optional[datetime] = Field(
+        default=None,
+        description="Normalized requested arrival deadline, when supplied.",
+    )
+    deadline_slack_mins: Optional[float] = Field(
+        default=None,
+        description=(
+            "Minutes between the calculated arrival and arrive_by; positive "
+            "means the route arrives before the deadline."
+        ),
+    )
+
+
+class RouteResponse(BaseModel):
+    """Common route response envelope returned by the optimization APIs.
+
+    The route engines intentionally expose additional provider- and corridor-
+    specific fields.  ``extra='allow'`` keeps those fields in the response and
+    in persisted route retrievals while documenting the stable fields that
+    drivers can rely on across route types.
+    """
+
+    model_config = ConfigDict(
+        extra="allow",
+        allow_inf_nan=False,
+        json_schema_extra={
+            "examples": [
+                {
+                    "generated_at": "2026-08-15T00:00:00+00:00",
+                    "data_source": "simulated",
+                    "route_id": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                    "route_code": "7K3M9PQ",
+                    "route_type": "ROAD_ROUTE",
+                    "planned_departure": "2026-08-15T08:00:00+07:00",
+                    "estimated_arrival": "2026-08-15T08:42:00+07:00",
+                    "estimated_travel_time_mins": 42.0,
+                    "total_eta_mins": 42.0,
+                    "scheduling": {
+                        "mode": "DEPART_AT",
+                        "requested_departure_at": "2026-08-15T08:00:00+07:00",
+                        "requested_arrive_by": None,
+                        "deadline_slack_mins": None,
+                    },
+                    "route_geometry": [[104.053, 1.1308], [104.02, 1.145]],
+                    "legs": [],
+                    "provenance": {"routing": "A* over OpenStreetMap"},
+                }
+            ],
+        },
+    )
+
+    generated_at: Optional[datetime] = Field(
+        default=None,
+        description="UTC timestamp when the response envelope was generated.",
+    )
+    data_source: Optional[str] = Field(
+        default=None,
+        description="Data-source label for traffic and routing provenance.",
+    )
+    provenance: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Road, routing, traffic, and licensing provenance metadata.",
+    )
+    route_id: Optional[str] = Field(
+        default=None,
+        min_length=64,
+        max_length=64,
+        pattern=r"^[0-9a-f]{64}$",
+        description=(
+            "Stable 64-character lowercase SHA-256 route identity. Drivers "
+            "may use it to retrieve the persisted route."
+        ),
+    )
+    route_code: Optional[str] = Field(
+        default=None,
+        min_length=7,
+        max_length=7,
+        pattern=r"^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{7}$",
+        description=(
+            "Seven-character human-safe route code for driver retrieval; it is "
+            "a lookup alias for route_id, not an access credential."
+        ),
+    )
+    route_type: Optional[str] = Field(
+        default=None,
+        description="ROAD_ROUTE, MULTIMODAL_FERRY_ROUTE, or a multi-stop variant.",
+    )
+    corridor: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Selected corridor summary, including distance and endpoints.",
+    )
+    stops: Optional[List[Dict[str, Any]]] = Field(
+        default=None,
+        description="Ordered stop cards returned for a multi-stop route.",
+    )
+    legs: Optional[List[Dict[str, Any]]] = Field(
+        default=None,
+        description="Per-leg route results for multimodal and multi-stop journeys.",
+    )
+    requested_origin: Optional[Dict[str, Any]] = None
+    requested_destination: Optional[Dict[str, Any]] = None
+    vehicle_type: Optional[str] = None
+    route_preference: Optional[str] = None
+    planned_departure: Optional[datetime] = Field(
+        default=None,
+        description="Concrete departure used by the solver, with timezone offset.",
+    )
+    estimated_arrival: Optional[datetime] = Field(
+        default=None,
+        description="Estimated destination arrival, including modeled waits/dwell.",
+    )
+    estimated_travel_time_mins: Optional[float] = Field(
+        default=None,
+        description="Moving travel time in minutes, excluding route-level waits.",
+    )
+    total_eta_mins: Optional[float] = Field(
+        default=None,
+        description="End-to-end ETA in minutes, including modeled access/wait time.",
+    )
+    scheduling: Optional[RouteSchedulingMetadata] = Field(
+        default=None,
+        description="How hour, departure_at, or arrive_by was applied.",
+    )
+    route_geometry: Optional[Any] = Field(
+        default=None,
+        description="Combined route geometry as provider-native coordinate arrays.",
+    )
+    route_data_source: Optional[str] = None
+    navigation: Optional[Any] = None
+    next_matching_ferries: Optional[List[Dict[str, Any]]] = None
 
 
 class RouteBenchmarkRequest(BaseModel):
@@ -558,6 +893,70 @@ def envelope(
     }
 
 
+_ROUTE_NO_STORE_HEADERS = {
+    "Cache-Control": "private, no-store",
+    "Pragma": "no-cache",
+}
+
+
+def _persist_route_response(
+    request: BaseModel,
+    route_kind: str,
+    result: Dict[str, Any],
+    now: datetime,
+) -> Dict[str, Any]:
+    """Attach a stable route identity and best-effort persist the response.
+
+    The request alone is not enough to identify a route: a graph revision or
+    selected path can change while the caller sends the same request.  Include
+    those stable route facts in the content-addressed identity, while leaving
+    generated timestamps and other presentation-only fields out.
+    """
+    request_payload = request.model_dump(mode="json")
+    result = dict(result)
+    identity_payload = {
+        "request": request_payload,
+        "graph_revision": router.GRAPH_REVISION,
+        "route_type": result.get("route_type"),
+        "corridor": result.get("corridor"),
+        "stops": result.get("stops"),
+        "route_geometry": result.get("route_geometry"),
+        "legs": [
+            {
+                key: leg.get(key)
+                for key in ("from", "to", "route_geometry", "route_type")
+            }
+            for leg in (result.get("legs") or [])
+            if isinstance(leg, dict)
+        ],
+        "approved_graph_overrides_used": result.get(
+            "approved_graph_overrides_used", [],
+        ),
+    }
+    identity = make_route_id(identity_payload, route_kind=route_kind)
+    # The route calculation is complete before this helper runs. Persistence is
+    # intentionally non-critical so a read-only/serverless filesystem cannot
+    # turn a valid route into a 5xx response.
+    try:
+        route_code = _ROUTE_STORE.route_code_for(identity)
+    except Exception:  # pragma: no cover - defensive storage boundary
+        route_code = short_route_code(identity)
+    result["route_id"] = identity
+    result["route_code"] = route_code
+    payload = envelope(result, now)
+    try:
+        _ROUTE_STORE.save(
+            identity,
+            payload,
+            request=identity_payload,
+            route_kind=route_kind,
+            route_code=route_code,
+        )
+    except Exception as error:  # pragma: no cover - defensive storage boundary
+        print(f"[route_store] persistence skipped ({type(error).__name__})")
+    return payload
+
+
 @app.get("/")
 def read_root():
     return {
@@ -708,10 +1107,24 @@ def api_route_benchmark(req: RouteBenchmarkRequest, response: Response):
     }
 
 
-@app.post("/api/optimize-route")
-@app.post("/optimize-route")
+@app.post(
+    "/api/optimize-route",
+    response_model=RouteResponse,
+    summary="Optimize a named corridor route",
+    response_description=(
+        "Persisted route envelope with a 64-character route_id and seven-character route_code."
+    ),
+)
+@app.post("/optimize-route", response_model=RouteResponse, include_in_schema=False)
 def api_optimize_route(req: RouteRequest):
-    """Optimal departure window, ETA, emissions and ferry connections."""
+    """Calculate a named-corridor route and persist its response.
+
+    Send exactly one of ``departure_at`` or ``arrive_by`` for full timestamp
+    scheduling. With neither field, ``hour`` is interpreted as the next local
+    departure hour (Batam time). The response includes ``planned_departure``,
+    ``estimated_arrival``, a ``scheduling`` explanation, and stable route
+    identifiers for later driver retrieval.
+    """
     now = clock.now()
     schedule_verified_at = _require_current_ferry_freshness_for_route()
     approved_snapshot, snapshot_source = _approved_override_snapshot_for_route()
@@ -723,6 +1136,8 @@ def api_optimize_route(req: RouteRequest):
             vehicle_type=req.vehicle_type,
             hour=req.hour if req.hour is not None else 14,
             weather=req.weather or 0,
+            departure_at=req.departure_at,
+            arrive_by=req.arrive_by,
             route_preference=req.route_preference,
             now=now,
             schedule_verified_at=schedule_verified_at,
@@ -731,18 +1146,28 @@ def api_optimize_route(req: RouteRequest):
     except ValueError as err:
         raise HTTPException(status_code=400, detail=str(err)) from err
     _routing_intelligence_audit(result, approved_snapshot, snapshot_source)
-    return envelope(result, now)
+    return _persist_route_response(req, "optimize-route", result, now)
 
 
-@app.post("/api/optimize-free-route")
-@app.post("/optimize-free-route")
+@app.post(
+    "/api/optimize-free-route",
+    response_model=RouteResponse,
+    summary="Optimize a free-form route",
+    response_description=(
+        "Persisted route envelope with a 64-character route_id and seven-character route_code."
+    ),
+)
+@app.post("/optimize-free-route", response_model=RouteResponse, include_in_schema=False)
 def api_optimize_free_route(req: FreeRouteRequest):
     """Route local or ferry-linked journeys within Singapore and Batam.
 
     Batam-only requests use the committed OSM A* graph. Singapore-involved
     requests compose road-access legs with an official timetable terminal
     corridor and retain a labelled continuity fallback when online OSRM is not
-    available.
+    available. Use exactly one of ``departure_at`` or ``arrive_by`` for
+    timestamp scheduling, or use the legacy ``hour`` field. The response
+    contains ``estimated_arrival``, ``scheduling``, ``route_id``, and
+    ``route_code``.
     """
     now = clock.now()
     schedule_verified_at = _require_current_ferry_freshness_for_route()
@@ -756,6 +1181,8 @@ def api_optimize_free_route(req: FreeRouteRequest):
             vehicle_type=req.vehicle_type,
             hour=req.hour if req.hour is not None else 14,
             weather=req.weather or 0,
+            departure_at=req.departure_at,
+            arrive_by=req.arrive_by,
             now=now,
             origin_name=req.origin_name,
             destination_name=req.destination_name,
@@ -766,11 +1193,22 @@ def api_optimize_free_route(req: FreeRouteRequest):
     except ValueError as err:
         raise HTTPException(status_code=400, detail=str(err)) from err
     _routing_intelligence_audit(result, approved_snapshot, snapshot_source)
-    return envelope(result, now)
+    return _persist_route_response(req, "optimize-free-route", result, now)
 
 
-@app.post("/api/optimize-multi-stop-route")
-@app.post("/optimize-multi-stop-route")
+@app.post(
+    "/api/optimize-multi-stop-route",
+    response_model=RouteResponse,
+    summary="Optimize a multi-stop route",
+    response_description=(
+        "Persisted multi-stop route envelope with route identifiers and per-leg results."
+    ),
+)
+@app.post(
+    "/optimize-multi-stop-route",
+    response_model=RouteResponse,
+    include_in_schema=False,
+)
 def api_optimize_multi_stop_route(req: MultiStopRouteRequest):
     """Schedule one journey through three or more ordered stops.
 
@@ -778,7 +1216,10 @@ def api_optimize_multi_stop_route(req: MultiStopRouteRequest):
     the committed Batam OSM graph, or the multimodal composer when a leg
     touches Singapore — and departs when the previous leg arrives plus that
     stop's dwell. Every leg runs a full A* search, so response time grows with
-    the stop count.
+    the stop count. Use exactly one of ``departure_at`` or ``arrive_by`` for
+    timestamp scheduling, or use the legacy ``hour`` field. The response
+    includes the ordered ``stops``, per-leg ``legs``, ``estimated_arrival``,
+    ``scheduling``, ``route_id``, and ``route_code``.
     """
     now = clock.now()
     schedule_verified_at = _require_current_ferry_freshness_for_route()
@@ -789,6 +1230,8 @@ def api_optimize_multi_stop_route(req: MultiStopRouteRequest):
             vehicle_type=req.vehicle_type,
             hour=req.hour if req.hour is not None else 14,
             weather=req.weather or 0,
+            departure_at=req.departure_at,
+            arrive_by=req.arrive_by,
             now=now,
             route_preference=req.route_preference,
             optimize_order=req.optimize_order,
@@ -798,7 +1241,60 @@ def api_optimize_multi_stop_route(req: MultiStopRouteRequest):
     except ValueError as err:
         raise HTTPException(status_code=400, detail=str(err)) from err
     _routing_intelligence_audit(result, approved_snapshot, snapshot_source)
-    return envelope(result, now)
+    return _persist_route_response(req, "optimize-multi-stop-route", result, now)
+
+
+@app.get(
+    "/api/routes/{route_id}",
+    response_model=RouteResponse,
+    summary="Retrieve a persisted route",
+    response_description=(
+        "The same persisted route envelope returned by the optimization endpoint."
+    ),
+)
+@app.get("/routes/{route_id}", response_model=RouteResponse, include_in_schema=False)
+def api_get_route(
+    route_id: str = Path(
+        ...,
+        min_length=7,
+        max_length=64,
+        pattern=r"^(?:[0-9a-f]{64}|[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{7})$",
+    ),
+    response: Response = None,
+    x_crossflow_route_token: Optional[str] = Header(default=None),
+    x_crossflow_admin_token: Optional[str] = Header(default=None),
+):
+    """Retrieve a persisted route for an authorized driver or operator.
+
+    A deployment-scoped route-read token is supported for driver clients. The
+    existing admin token remains a compatibility path until user/session
+    authentication is connected. A route ID is content-addressed, not access
+    control by itself. The path accepts either the full 64-character
+    ``route_id`` or its seven-character ``route_code`` alias and returns the
+    persisted route envelope with ``estimated_arrival``, ``scheduling``, and
+    route identifiers.
+    """
+    expected_reader = os.environ.get("CROSSFLOW_ROUTE_READ_TOKEN", "")
+    reader_ok = bool(
+        expected_reader
+        and x_crossflow_route_token
+        and secrets.compare_digest(x_crossflow_route_token, expected_reader)
+    )
+    if not reader_ok:
+        _require_admin(
+            x_crossflow_admin_token,
+            detail=(
+                "A valid route-read token or administrator token is required "
+                "to retrieve routes."
+            ),
+        )
+    if response is not None:
+        for header, value in _ROUTE_NO_STORE_HEADERS.items():
+            response.headers[header] = value
+    stored = _ROUTE_STORE.get(route_id)
+    if stored is None:
+        raise HTTPException(status_code=404, detail="Route not found.")
+    return stored
 
 
 def _require_current_ferry_freshness_for_route() -> str:

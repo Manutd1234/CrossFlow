@@ -444,7 +444,29 @@ export interface RouteEndpointSnapshot {
   region?: 'BATAM' | 'SINGAPORE';
 }
 
+/** Optional wall-clock scheduling constraint for route requests.
+ *
+ * Values should be ISO-8601 strings with an explicit offset (for example
+ * `2026-08-16T09:30:00+07:00`). The legacy `hour` argument remains supported
+ * when neither field is supplied.
+ */
+export interface RouteScheduleOptions {
+  departure_at?: string;
+  arrive_by?: string;
+}
+
+export interface RouteSchedulingMetadata {
+  mode: 'HOUR' | 'DEPART_AT' | 'ARRIVE_BY';
+  requested_departure_at?: string | null;
+  requested_arrive_by?: string | null;
+  deadline_slack_mins?: number | null;
+}
+
 export interface RouteOptimizationResult {
+  /** Content-addressed identifier returned by the authoritative route API. */
+  route_id?: string;
+  /** Short seven-character code suitable for driver handoff. */
+  route_code?: string;
   route_type?: 'ROAD_ROUTE' | 'MULTIMODAL_FERRY_ROUTE' | 'FASTEST_BYPASS' | 'ECO_EFFICIENT' | 'PORT_SYNC';
   corridor: {
     id: string;
@@ -469,6 +491,12 @@ export interface RouteOptimizationResult {
   planning_traffic_snapshot?: PlanningTrafficSnapshot;
   generalized_cost_mins?: number | null;
   planned_departure?: string;
+  /** Scheduling constraint echoed by newer route APIs. */
+  scheduling?: RouteSchedulingMetadata;
+  schedule_mode?: 'departure' | 'arrive_by';
+  requested_departure_at?: string;
+  requested_arrive_by?: string;
+  deadline_slack_mins?: number | null;
   congestion_prediction: {
     current_score: number;
     predicted_30min: number;
