@@ -450,6 +450,57 @@ class VehicleRoutingPolicyTests(unittest.TestCase):
         self.assertEqual(car_core, frozenset({1, 2}))
         self.assertEqual(motorcycle_core, frozenset(nodes))
 
+    def test_main_core_cache_canonicalizes_omitted_and_explicit_none(self):
+        router._main_routing_core.cache_clear()
+        first = router._main_routing_core("COMMUTER")
+        after_omitted = router._main_routing_core.cache_info()
+        second = router._main_routing_core("COMMUTER", None)
+        after_explicit_none = router._main_routing_core.cache_info()
+        self.assertEqual(first, second)
+        self.assertEqual(after_explicit_none.misses, after_omitted.misses)
+        self.assertEqual(
+            after_explicit_none.hits,
+            after_omitted.hits + 1,
+        )
+
+    def test_filtered_routing_view_is_immutable_and_astar_preserves_parity(self):
+        nodes = {
+            1: (1.0, 104.0), 2: (1.0, 104.001),
+            3: (1.0, 104.002), 4: (1.0, 104.003),
+        }
+        adjacency = {
+            1: [_edge(2, 100.0, 1, highway="residential")],
+            2: [
+                _edge(1, 100.0, 1, highway="residential"),
+                _edge(3, 100.0, 2, highway="residential"),
+            ],
+            3: [
+                _edge(2, 100.0, 2, highway="residential"),
+                _edge(4, 100.0, 3, highway="residential"),
+            ],
+            4: [_edge(3, 100.0, 3, highway="residential")],
+        }
+        with patch.multiple(
+            router,
+            NODES=nodes,
+            ROAD_ADJ=adjacency,
+            ADJ={source: [(edge.target, edge.distance_m)
+                         for edge in edges]
+                 for source, edges in adjacency.items()},
+            NODE_META={},
+            LANDMARKS={"batam_centre": 1},
+        ):
+            router._main_routing_core.cache_clear()
+            view = router._routing_view("COMMUTER")
+            route = router.astar_detailed(1, 4, vehicle_type="COMMUTER")
+            self.assertEqual(route.nodes, [1, 2, 3, 4])
+            with self.assertRaises(TypeError):
+                view.adjacency[1] = ()
+            self.assertEqual(
+                router._main_routing_core("COMMUTER"),
+                view.core,
+            )
+
 
 class GraphBuilderVehicleMetadataTests(unittest.TestCase):
     @staticmethod

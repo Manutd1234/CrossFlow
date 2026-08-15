@@ -9,3 +9,5 @@ scikit-learn==1.9.0
 # Hosts whose OpenSSL ships no trust store — python.org macOS builds, slim
 # containers — otherwise fail every request and silently degrade to estimates.
 certifi==2026.7.22
+# Windows does not ship the IANA time-zone database used by zoneinfo.
+tzdata==2026.3

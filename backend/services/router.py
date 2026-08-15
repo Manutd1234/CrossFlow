@@ -19,8 +19,11 @@ import re
 from collections import ChainMap
 from dataclasses import dataclass
 from functools import lru_cache
+from time import monotonic
+from types import MappingProxyType
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
+from services.alt_index import AltIndex
 from services.route_learning_store import (
     DEFAULT_ROUTE_LEARNING_STORE,
     MAX_CLEAR_CONGESTION_SCORE,
@@ -36,9 +39,76 @@ _GRAPH_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     "data", "batam_graph.json",
 )
+_ALT_INDEX_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "data", "alt",
+)
 
 EARTH_RADIUS_M = 6371008.8
 ENDPOINT_DESTINATION_ACCESS_RADIUS_M = 1_500.0
+
+# Alternative routes are a presentation feature and must not be allowed to
+# turn the primary route into an unbounded request.  These defaults are
+# intentionally conservative; deployments can tune them without changing the
+# route response contract, and callers can override them per request.
+DEFAULT_ALTERNATIVE_MAX_SEARCHES = 3
+# A route search itself may take several seconds on the full Batam graph;
+# this budget still removes the old seven-attempt tail while preserving the
+# existing expectation that ordinary routes can usually produce one option.
+DEFAULT_ALTERNATIVE_TIME_BUDGET_MS = 10_000.0
+DEFAULT_ALTERNATIVE_MAX_SETTLED_STATES = 250_000
+
+
+def _bounded_int_setting(
+    value: Optional[int], env_name: str, default: int,
+) -> int:
+    """Resolve a non-negative integer budget from a request or environment."""
+    if value is None:
+        raw = os.environ.get(env_name)
+        if raw is None:
+            return default
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            return default
+    return max(0, int(value))
+
+
+def _bounded_float_setting(
+    value: Optional[float], env_name: str, default: float,
+) -> float:
+    """Resolve a finite non-negative duration budget."""
+    if value is None:
+        raw = os.environ.get(env_name)
+        if raw is None:
+            return default
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            return default
+    value = float(value)
+    return value if math.isfinite(value) and value >= 0.0 else default
+
+
+def _alternative_budget(
+    max_searches: Optional[int],
+    time_budget_ms: Optional[float],
+    max_settled_states: Optional[int],
+) -> Tuple[int, float, int]:
+    return (
+        _bounded_int_setting(
+            max_searches, "CROSSFLOW_ALTERNATIVE_MAX_SEARCHES",
+            DEFAULT_ALTERNATIVE_MAX_SEARCHES,
+        ),
+        _bounded_float_setting(
+            time_budget_ms, "CROSSFLOW_ALTERNATIVE_TIME_BUDGET_MS",
+            DEFAULT_ALTERNATIVE_TIME_BUDGET_MS,
+        ),
+        _bounded_int_setting(
+            max_settled_states, "CROSSFLOW_ALTERNATIVE_MAX_SETTLED_STATES",
+            DEFAULT_ALTERNATIVE_MAX_SETTLED_STATES,
+        ),
+    )
 
 # Additional named places snapped to the committed graph.  Keeping these ids
 # here makes the expanded point-to-point planner available immediately without
@@ -205,6 +275,34 @@ class EdgeTraversalDecision:
     allowed: bool
     reason: str
     checked_constraints: Tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class RoutingView:
+    """Immutable vehicle-filtered view of one graph/override snapshot.
+
+    ``adjacency`` contains only nodes and directed edges that pass the static
+    vehicle policy.  Endpoint-only ``destination`` access is intentionally not
+    included: searches that need that trip-specific exception fall back to the
+    raw snapshot adjacency in :func:`astar_detailed`.
+    """
+
+    adjacency: Mapping[int, Tuple[RoadEdge, ...]]
+    core: frozenset[int]
+
+
+@dataclass(frozen=True)
+class StaticEdgeFeatures:
+    """Request-independent edge values reused by the hot cost loop."""
+
+    physical_floor_s: float
+    baseline_free_flow_s: float
+    distance_proxy_s: float
+    road_quality: float
+    congestion_exposure: float
+    weather_exposure: float
+    suitability_multiplier: float
+    through_suitability_multiplier: float
 
 
 @dataclass(frozen=True)
@@ -928,10 +1026,10 @@ def _road_adjacency_for_snapshot(
 
 
 @lru_cache(maxsize=32)
-def _main_routing_core(
+def _routing_view(
     vehicle_type: str = "COMMUTER",
     approved_override_snapshot: Optional[ApprovedGraphOverrideSnapshot] = None,
-) -> frozenset[int]:
+) -> RoutingView:
     """Return the mode-specific mutually reachable coordinate-snap core.
 
     The committed graph contains a handful of one-way service-lane tips.  They
@@ -946,22 +1044,31 @@ def _main_routing_core(
     """
     profile = vehicle_profile(vehicle_type)
     road_adjacency = _road_adjacency_for_snapshot(approved_override_snapshot)
-    eligible_nodes = {
+    eligible_nodes = frozenset(
         node_id for node_id in road_adjacency
         if node_traversal_decision(node_id, profile).allowed
-    }
-    filtered: Dict[int, Tuple[int, ...]] = {
+    )
+    filtered_edges: Dict[int, Tuple[RoadEdge, ...]] = {
         source: tuple(
-            edge.target for edge in road_adjacency.get(source, ())
+            edge for edge in road_adjacency.get(source, ())
             if edge.target in eligible_nodes
             and edge_traversal_decision(edge, profile).allowed
-            and node_traversal_decision(edge.target, profile).allowed
         )
         for source in eligible_nodes
     }
+    # MappingProxyType prevents a caller from mutating the cached view.  Tuples
+    # above similarly make each outgoing edge list safe to share between A*
+    # requests.
+    filtered_adjacency: Mapping[int, Tuple[RoadEdge, ...]] = MappingProxyType(
+        filtered_edges
+    )
+    filtered = {
+        source: tuple(edge.target for edge in edges)
+        for source, edges in filtered_adjacency.items()
+    }
     anchor = LANDMARKS.get("batam_centre")
     if anchor is None or anchor not in filtered:
-        return frozenset(eligible_nodes)
+        return RoutingView(filtered_adjacency, eligible_nodes)
 
     forward = {anchor}
     stack = [anchor]
@@ -987,7 +1094,71 @@ def _main_routing_core(
                 stack.append(previous)
 
     core = forward & backward
-    return frozenset(core or eligible_nodes)
+    return RoutingView(filtered_adjacency, frozenset(core or eligible_nodes))
+
+
+def _main_routing_core(
+    vehicle_type: str = "COMMUTER",
+    approved_override_snapshot: Optional[ApprovedGraphOverrideSnapshot] = None,
+) -> frozenset[int]:
+    """Compatibility facade returning the mode-specific routing core.
+
+    Keep the historical function and its cache controls public while routing
+    callers share the richer immutable :class:`RoutingView`.  Normalizing the
+    optional snapshot here means omitted and explicit ``None`` calls use the
+    same cached key in ``_routing_view``.
+    """
+    return _routing_view(
+        vehicle_profile(vehicle_type).key,
+        approved_override_snapshot,
+    ).core
+
+
+# Existing diagnostics and tests call ``_main_routing_core.cache_clear()``.
+# Delegate the cache API to the canonical view cache so the compatibility
+# facade cannot accidentally reintroduce a second cache identity. Clear the
+# dependent feature/index caches too; graph-fixture tests can replace the
+# module graph without retaining features from the committed graph.
+def _clear_routing_view_cache() -> None:
+    _routing_view.cache_clear()
+    static_cache = globals().get("_static_edge_features")
+    if static_cache is not None:
+        static_cache.cache_clear()
+    alt_cache = globals().get("_alt_index_for_profile")
+    if alt_cache is not None:
+        alt_cache.cache_clear()
+
+
+_main_routing_core.cache_clear = _clear_routing_view_cache  # type: ignore[attr-defined]
+_main_routing_core.cache_info = _routing_view.cache_info  # type: ignore[attr-defined]
+_main_routing_core.cache_parameters = _routing_view.cache_parameters  # type: ignore[attr-defined]
+
+
+@lru_cache(maxsize=16)
+def _alt_index_for_profile(profile_key: str) -> Optional[AltIndex]:
+    """Load a revision-bound ALT index, falling back safely when unavailable."""
+    manifest_path = os.path.join(_ALT_INDEX_DIR, "manifest.json")
+    try:
+        with open(manifest_path, "r", encoding="utf-8") as source:
+            manifest = json.load(source)
+        if manifest.get("graph_revision") != GRAPH_REVISION:
+            return None
+        entry = next(
+            (
+                item for item in manifest.get("indexes", ())
+                if profile_key in item.get("profiles", ())
+            ),
+            None,
+        )
+        if not entry:
+            return None
+        return AltIndex.load(
+            os.path.join(_ALT_INDEX_DIR, str(entry["path"])),
+            expected_graph_revision=GRAPH_REVISION,
+            expected_topology_id=str(entry["topology_id"]),
+        )
+    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+        return None
 
 
 def haversine_m(a: Tuple[float, float], b: Tuple[float, float]) -> float:
@@ -1420,12 +1591,48 @@ def _weather_class_exposure(edge: RoadEdge) -> float:
     }.get(highway, 1.10)
 
 
+@lru_cache(maxsize=32)
+def _static_edge_features(
+    vehicle_type: str = "COMMUTER",
+    approved_override_snapshot: Optional[ApprovedGraphOverrideSnapshot] = None,
+) -> Mapping[Tuple[int, int, int], StaticEdgeFeatures]:
+    """Build immutable edge features once per profile and graph snapshot."""
+    profile = vehicle_profile(vehicle_type)
+    adjacency = _road_adjacency_for_snapshot(approved_override_snapshot)
+    features: Dict[Tuple[int, int, int], StaticEdgeFeatures] = {}
+    for source, edges in adjacency.items():
+        for edge in edges:
+            physical_floor_s = edge.distance_m / profile.max_speed_kph * 3.6
+            baseline_free_flow_s = (
+                max(physical_floor_s, edge.approved_duration_s)
+                if edge.approved_duration_s is not None
+                else edge.distance_m / _edge_speed_kph(edge, profile) * 3.6
+            )
+            road_quality, _ = _edge_road_quality_score(edge, profile)
+            features[_edge_key(source, edge)] = StaticEdgeFeatures(
+                physical_floor_s=physical_floor_s,
+                baseline_free_flow_s=baseline_free_flow_s,
+                distance_proxy_s=physical_floor_s,
+                road_quality=road_quality,
+                congestion_exposure=_congestion_class_exposure(edge),
+                weather_exposure=_weather_class_exposure(edge),
+                suitability_multiplier=_road_suitability_multiplier(
+                    edge, profile, False,
+                ),
+                through_suitability_multiplier=_road_suitability_multiplier(
+                    edge, profile, True,
+                ),
+            )
+    return MappingProxyType(features)
+
+
 def _turn_cost_s(
     previous_source: Optional[int],
     node: int,
     previous_edge: Optional[RoadEdge],
     edge: RoadEdge,
     profile: VehicleProfile,
+    eligible_adjacency: Optional[Mapping[int, Tuple[RoadEdge, ...]]] = None,
 ) -> Tuple[float, float, float]:
     """Return maneuver, short-maneuver and signal seconds at one junction."""
     signal = (
@@ -1440,10 +1647,14 @@ def _turn_cost_s(
     outgoing = _bearing(NODES[node], NODES[edge.target])
     magnitude = abs(_signed_turn(incoming, outgoing))
     road_changed = not _same_road(previous_edge, edge)
+    candidates = (eligible_adjacency or ROAD_ADJ).get(node, ())
     legal_choices = {
-        candidate.target for candidate in ROAD_ADJ.get(node, ())
+        candidate.target for candidate in candidates
         if candidate.target != previous_source
-        and edge_traversal_decision(candidate, profile).allowed
+        and (
+            eligible_adjacency is not None
+            or edge_traversal_decision(candidate, profile).allowed
+        )
     }
     is_decision = len(legal_choices) > 1
     if not road_changed and not (is_decision and magnitude >= 35.0):
@@ -1495,10 +1706,15 @@ def _edge_learning_adjustment(
     local_congestion_score: float,
     network_congestion_score: float,
     weather: int,
+    static: Optional[StaticEdgeFeatures] = None,
 ) -> Tuple[float, float, Optional[LearnedEdge]]:
     """Return baseline/effective free flow and the applied verified aggregate."""
-    physical_floor_s = edge.distance_m / profile.max_speed_kph * 3.6
-    baseline_s = (
+    physical_floor_s = (
+        static.physical_floor_s
+        if static is not None
+        else edge.distance_m / profile.max_speed_kph * 3.6
+    )
+    baseline_s = static.baseline_free_flow_s if static is not None else (
         max(physical_floor_s, edge.approved_duration_s)
         if edge.approved_duration_s is not None
         else edge.distance_m / _edge_speed_kph(edge, profile) * 3.6
@@ -1540,6 +1756,8 @@ def _edge_cost_components(
     weather: int = 0,
     prefer_through_roads: bool = False,
     learning_snapshot: Optional[LearningSnapshot] = None,
+    static_features: Optional[Mapping[Tuple[int, int, int], StaticEdgeFeatures]] = None,
+    eligible_adjacency: Optional[Mapping[int, Tuple[RoadEdge, ...]]] = None,
 ) -> Dict[str, float]:
     """Return additive seconds used by routing and ETA calculation.
 
@@ -1549,6 +1767,7 @@ def _edge_cost_components(
     corridor delay again afterward.
     """
     learning_snapshot = learning_snapshot or _current_learning_snapshot()
+    static = (static_features or {}).get(_edge_key(source, edge))
     local_score = _edge_local_congestion_score(source, edge, congestion_scores)
     global_score = max(0.0, min(100.0, float(network_congestion_score)))
     baseline_free_flow_s, free_flow_s, _ = _edge_learning_adjustment(
@@ -1559,6 +1778,7 @@ def _edge_cost_components(
         local_congestion_score=local_score,
         network_congestion_score=global_score,
         weather=weather,
+        static=static,
     )
     effective_score = (
         0.35 * global_score + 0.65 * local_score
@@ -1567,7 +1787,10 @@ def _edge_cost_components(
     congestion_delay_s = (
         free_flow_s
         * profile.congestion_sensitivity
-        * _congestion_class_exposure(edge)
+        * (
+            static.congestion_exposure
+            if static is not None else _congestion_class_exposure(edge)
+        )
         * 1.8
         * (effective_score / 100.0) ** 2
     )
@@ -1604,23 +1827,37 @@ def _edge_cost_components(
     weather_base = (0.0, 0.12, 0.30)[weather]
     weather_delay_s = (
         free_flow_s * weather_base * profile.weather_sensitivity
-        * _weather_class_exposure(edge)
+        * (
+            static.weather_exposure
+            if static is not None else _weather_class_exposure(edge)
+        )
     )
     maneuver_s, short_s, signal_s = _turn_cost_s(
         previous_source, source, previous_edge, edge, profile,
+        eligible_adjacency,
     )
     modeled_s = (
         free_flow_s + congestion_delay_s + weather_delay_s
         + maneuver_s + short_s + signal_s
     )
-    suitability_s = free_flow_s * (
-        _road_suitability_multiplier(edge, profile, prefer_through_roads) - 1.0
+    suitability_multiplier = (
+        static.through_suitability_multiplier if prefer_through_roads
+        else static.suitability_multiplier
+    ) if static is not None else _road_suitability_multiplier(
+        edge, profile, prefer_through_roads,
     )
-    road_quality, _ = _edge_road_quality_score(edge, profile)
+    suitability_s = free_flow_s * (suitability_multiplier - 1.0)
+    road_quality = (
+        static.road_quality if static is not None
+        else _edge_road_quality_score(edge, profile)[0]
+    )
     road_quality_penalty_s = free_flow_s * max(0.0, 1.0 - road_quality)
     policy = vehicle_routing_policy(profile)
     weights = policy.cost_weights
-    distance_proxy_s = edge.distance_m / profile.max_speed_kph * 3.6
+    distance_proxy_s = (
+        static.distance_proxy_s if static is not None
+        else edge.distance_m / profile.max_speed_kph * 3.6
+    )
     objective_time_s = free_flow_s + weather_delay_s + maneuver_s + short_s + signal_s
     expected_objective_s = (
         weights.time * objective_time_s
@@ -1818,6 +2055,8 @@ def astar_detailed(
     route_preference: str = "BALANCED",
     learning_snapshot: Optional[LearningSnapshot] = None,
     approved_override_snapshot: Optional[ApprovedGraphOverrideSnapshot] = None,
+    deadline_monotonic: Optional[float] = None,
+    max_settled_states: Optional[int] = None,
 ) -> Optional[PathResult]:
     """Lowest preference-weighted path with exact edges and raw road distance.
 
@@ -1863,7 +2102,9 @@ def astar_detailed(
     # Free-coordinate endpoints already snap to this strict public core, so they
     # must never unlock nearby residential/customer-only shortcuts. A named
     # landmark outside the core may receive one bounded connector approach.
-    strict_core = _main_routing_core(vehicle_type, approved_override_snapshot)
+    strict_core = _routing_view(
+        profile.key, approved_override_snapshot,
+    ).core
     source_needs_destination_access = src not in strict_core
     target_needs_destination_access = dst not in strict_core
     if not node_traversal_decision(
@@ -1876,6 +2117,19 @@ def astar_detailed(
         allow_destination_access=target_needs_destination_access,
     ).allowed:
         return None
+
+    # Most searches can share the immutable vehicle-filtered view and avoid
+    # re-running static eligibility checks for every expansion.  A named
+    # endpoint outside the public core is a deliberate exception: its bounded
+    # destination-only approach may require an edge/node that the strict view
+    # excludes, so retain the full snapshot adjacency for that trip.
+    uses_filtered_view = (
+        not source_needs_destination_access and not target_needs_destination_access
+    )
+    if uses_filtered_view:
+        road_adjacency = _routing_view(
+            profile.key, approved_override_snapshot,
+        ).adjacency
 
     avoid_nodes = avoid_nodes or set()
     banned_edges = banned_edges or set()
@@ -1915,10 +2169,24 @@ def astar_detailed(
         endpoint_access_cache[node_id] = allowed
         return allowed
 
+    alt_index = (
+        None
+        if approved_override_snapshot is not None
+        and approved_override_snapshot.overrides
+        else _alt_index_for_profile(profile.key)
+    )
+    static_feature_map = _static_edge_features(
+        profile.key, approved_override_snapshot,
+    )
+
     def heuristic(node: int) -> float:
-        straight_proxy_s = (
-            haversine_m(NODES[node], goal) / profile.max_speed_kph * 3.6
-        )
+        straight_distance_m = haversine_m(NODES[node], goal)
+        if alt_index is not None:
+            straight_distance_m = max(
+                straight_distance_m,
+                alt_index.distance_lower_bound(node, dst),
+            )
+        straight_proxy_s = straight_distance_m / profile.max_speed_kph * 3.6
         if preference.key == "BALANCED":
             coefficient = policy.cost_weights.time + policy.cost_weights.distance
         elif preference.key == "FASTEST":
@@ -1941,6 +2209,11 @@ def astar_detailed(
     closed: set[Tuple[int, int, int]] = set()
 
     while open_heap:
+        if (
+            deadline_monotonic is not None
+            and monotonic() >= deadline_monotonic
+        ):
+            return None
         _, g, state = heapq.heappop(open_heap)
         if state in closed:
             continue
@@ -1961,34 +2234,44 @@ def astar_detailed(
                 search_cost_s=g,
             )
         closed.add(state)
+        if (
+            max_settled_states is not None
+            and len(closed) >= max(0, int(max_settled_states))
+        ):
+            return None
         previous_source = previous_source_raw if previous_source_raw >= 0 else None
         previous_edge = incoming_edge.get(state)
 
         for edge in road_adjacency.get(node, ()):
+            if (
+                deadline_monotonic is not None
+                and monotonic() >= deadline_monotonic
+            ):
+                return None
             nxt = edge.target
             if _edge_key(node, edge) in banned_edges:
                 continue
-            edge_decision = edge_traversal_decision(edge, profile)
-            if not edge_decision.allowed:
-                edge_decision = edge_traversal_decision(
-                    edge,
-                    profile,
-                    allow_destination_access=(
-                        is_endpoint_access_node(node)
-                        and is_endpoint_access_node(nxt)
-                    ),
-                )
-            if not edge_decision.allowed:
-                continue
-            node_decision = node_traversal_decision(nxt, profile)
-            if not node_decision.allowed:
-                node_decision = node_traversal_decision(
-                    nxt,
-                    profile,
-                    allow_destination_access=is_endpoint_access_node(nxt),
-                )
-            if not node_decision.allowed:
-                continue
+            if not uses_filtered_view:
+                edge_decision = edge_traversal_decision(edge, profile)
+                if not edge_decision.allowed:
+                    edge_decision = edge_traversal_decision(
+                        edge,
+                        profile,
+                        allow_destination_access=(
+                            is_endpoint_access_node(node)
+                            and is_endpoint_access_node(nxt)
+                        ),
+                    )
+                if not edge_decision.allowed:
+                    continue
+                node_decision = node_traversal_decision(nxt, profile)
+                if not node_decision.allowed:
+                    node_decision = node_traversal_decision(
+                        nxt, profile,
+                        allow_destination_access=is_endpoint_access_node(nxt),
+                    )
+                if not node_decision.allowed:
+                    continue
             next_state = (nxt, node, edge.road_index)
             if next_state in closed:
                 continue
@@ -2001,6 +2284,8 @@ def astar_detailed(
                 network_congestion_score=network_congestion_score,
                 weather=weather, prefer_through_roads=prefer_through_roads,
                 learning_snapshot=learning_snapshot,
+                static_features=static_feature_map,
+                eligible_adjacency=(road_adjacency if uses_filtered_view else None),
             )
             # Alternative-generation and compatibility avoidance are search
             # penalties only. They never leak into distance or published ETA.
@@ -2399,11 +2684,20 @@ def alternative_paths(
     route_preference: str = "BALANCED",
     learning_snapshot: Optional[LearningSnapshot] = None,
     approved_override_snapshot: Optional[ApprovedGraphOverrideSnapshot] = None,
+    max_searches: Optional[int] = None,
+    time_budget_ms: Optional[float] = None,
+    max_settled_states: Optional[int] = None,
 ) -> List[Tuple[PathResult, float]]:
     """Return bounded, meaningfully distinct alternatives via edge penalties."""
     learning_snapshot = learning_snapshot or _current_learning_snapshot()
     if len(primary.edges) < 4 or limit <= 0:
         return []
+    max_searches, time_budget_ms, max_settled_states = _alternative_budget(
+        max_searches, time_budget_ms, max_settled_states,
+    )
+    if max_searches <= 0 or max_settled_states <= 0:
+        return []
+    deadline = monotonic() + time_budget_ms / 1000.0
 
     # Increasing penalties progressively encourage a different corridor while
     # keeping the search bounded and deterministic. Penalties are undirected so
@@ -2457,7 +2751,11 @@ def alternative_paths(
         )
         return shared_metres / candidate.distance_m if candidate.distance_m else 1.0
 
+    attempted_searches = 0
+    similar_rejections = 0
     for penalty in penalty_schedule:
+        if attempted_searches >= max_searches or monotonic() >= deadline:
+            break
         # Penalize every already accepted route, not only the primary. This
         # avoids repeatedly rediscovering alternative 1 when searching for a
         # second genuinely different corridor.
@@ -2466,6 +2764,7 @@ def alternative_paths(
             for accepted_route in accepted
             for source, edge in zip(accepted_route.nodes, accepted_route.edges)
         }
+        attempted_searches += 1
         candidate = astar_detailed(
             primary.nodes[0], primary.nodes[-1],
             avoid_nodes=avoid_nodes,
@@ -2479,8 +2778,15 @@ def alternative_paths(
             route_preference=route_preference,
             learning_snapshot=learning_snapshot,
             approved_override_snapshot=approved_override_snapshot,
+            deadline_monotonic=deadline,
+            max_settled_states=max_settled_states,
         )
-        if candidate is None or tuple(candidate.nodes) in seen_paths:
+        if candidate is None:
+            # A deadline/settled-state cutoff is terminal for this request:
+            # later penalties cannot produce a complete candidate within the
+            # same synchronous budget.
+            break
+        if tuple(candidate.nodes) in seen_paths:
             continue
         seen_paths.add(tuple(candidate.nodes))
         if candidate.distance_m > primary.distance_m * 1.65:
@@ -2495,7 +2801,15 @@ def alternative_paths(
             continue
         overlaps = [overlap_ratio(candidate, route) for route in accepted]
         if any(overlap > 0.82 for overlap in overlaps):
+            similar_rejections += 1
+            # Once two successive bounded searches produce only near-duplicate
+            # corridors, further penalties are unlikely to yield a useful
+            # option. Stopping here only reduces optional alternatives; it can
+            # never alter the already-computed primary route.
+            if similar_rejections >= 2:
+                break
             continue
+        similar_rejections = 0
         maneuver_count, turn_count, short_turn_count, _ = route_quality(candidate)
         if maneuver_count > max(primary_maneuvers + 10, math.ceil(primary_maneuvers * 1.75)):
             continue
@@ -2966,6 +3280,9 @@ def _with_alternatives(
     route_preference: str = "BALANCED",
     learning_snapshot: Optional[LearningSnapshot] = None,
     approved_override_snapshot: Optional[ApprovedGraphOverrideSnapshot] = None,
+    alternative_max_searches: Optional[int] = None,
+    alternative_time_budget_ms: Optional[float] = None,
+    alternative_max_settled_states: Optional[int] = None,
 ) -> Dict[str, Any]:
     learning_snapshot = learning_snapshot or _current_learning_snapshot()
     alternatives = []
@@ -2978,6 +3295,9 @@ def _with_alternatives(
             route_preference=route_preference,
             learning_snapshot=learning_snapshot,
             approved_override_snapshot=approved_override_snapshot,
+            max_searches=alternative_max_searches,
+            time_budget_ms=alternative_time_budget_ms,
+            max_settled_states=alternative_max_settled_states,
         ), start=1,
     ):
         alternative = _path_payload(
@@ -3016,6 +3336,9 @@ def route_between(
     weather: int = 0,
     route_preference: str = "BALANCED",
     approved_override_snapshot: Optional[ApprovedGraphOverrideSnapshot] = None,
+    alternative_max_searches: Optional[int] = None,
+    alternative_time_budget_ms: Optional[float] = None,
+    alternative_max_settled_states: Optional[int] = None,
 ) -> Optional[Dict]:
     """Route named landmarks under the same conditions as free-form routes."""
     src, dst = LANDMARKS.get(origin_key), LANDMARKS.get(dest_key)
@@ -3034,6 +3357,9 @@ def route_between(
         weather=weather,
         route_preference=route_preference,
         approved_override_snapshot=approved_override_snapshot,
+        alternative_max_searches=alternative_max_searches,
+        alternative_time_budget_ms=alternative_time_budget_ms,
+        alternative_max_settled_states=alternative_max_settled_states,
     )
     if payload is None:
         return None
@@ -3060,10 +3386,11 @@ def snap_to_graph(
     best_id: Optional[int] = None
     best_d = math.inf
     target = (lat, lng)
-    for node_id in _main_routing_core(
+    view = _routing_view(
         vehicle_profile(vehicle_type).key,
         approved_override_snapshot,
-    ):
+    )
+    for node_id in view.core:
         d = haversine_m(NODES[node_id], target)
         if d < best_d:
             best_d = d
@@ -3085,6 +3412,10 @@ def _route_between_nodes_uncached(
     route_preference: str = "BALANCED",
     learning_snapshot: Optional[LearningSnapshot] = None,
     approved_override_snapshot: Optional[ApprovedGraphOverrideSnapshot] = None,
+    reuse_primary_cache: bool = False,
+    alternative_max_searches: Optional[int] = None,
+    alternative_time_budget_ms: Optional[float] = None,
+    alternative_max_settled_states: Optional[int] = None,
 ) -> Optional[Dict]:
     """Route between two raw OSM node IDs, with optional super-congested red zone avoidance.
 
@@ -3118,18 +3449,23 @@ def _route_between_nodes_uncached(
             "alternatives": [],
         }
 
-    baseline = astar_detailed(
-        src_node, dst_node, vehicle_type=vehicle_type,
-        default_congestion_estimate=default_congestion_estimate,
-        network_congestion_score=network_congestion_score, weather=weather,
-        route_preference=route_preference,
-        learning_snapshot=learning_snapshot,
-        approved_override_snapshot=approved_override_snapshot,
+    primary_paths = _primary_paths_for_route(
+        src_node,
+        dst_node,
+        _zone_cache_json(avoid_zones),
+        vehicle_type,
+        network_congestion_score,
+        weather,
+        route_preference,
+        learning_snapshot,
+        default_congestion_estimate,
+        approved_override_snapshot,
+        reuse_primary_cache=reuse_primary_cache,
     )
-    if baseline is None:
+    if primary_paths is None:
         return None
+    baseline, result, zone_node_sets, congestion_scores = primary_paths
 
-    zone_node_sets = _all_zone_node_sets(avoid_zones) if avoid_zones else []
     # Endpoint zones still affect modeled time. They are excluded only from the
     # list of zones we claim were bypassed, because a route cannot avoid a zone
     # containing its origin or destination.
@@ -3137,20 +3473,6 @@ def _route_between_nodes_uncached(
         (name, nodes, score) for name, nodes, score in zone_node_sets
         if src_node not in nodes and dst_node not in nodes
     ]
-    congestion_scores = _zone_congestion_scores(zone_node_sets)
-    result = astar_detailed(
-        src_node, dst_node, vehicle_type=vehicle_type,
-        congestion_scores=congestion_scores,
-        default_congestion_estimate=default_congestion_estimate,
-        network_congestion_score=network_congestion_score, weather=weather,
-        route_preference=route_preference,
-        learning_snapshot=learning_snapshot,
-        approved_override_snapshot=approved_override_snapshot,
-    ) if congestion_scores else baseline
-    if result is None:
-        # Penalties should not disconnect the graph, but retain the ordinary
-        # route as a defensive fallback if the routing strategy changes later.
-        result = baseline
 
     baseline_path = baseline.nodes
     avoided_names = [
@@ -3182,6 +3504,9 @@ def _route_between_nodes_uncached(
         route_preference=route_preference,
         learning_snapshot=learning_snapshot,
         approved_override_snapshot=approved_override_snapshot,
+        alternative_max_searches=alternative_max_searches,
+        alternative_time_budget_ms=alternative_time_budget_ms,
+        alternative_max_settled_states=alternative_max_settled_states,
     ) if include_alternatives else payload
 
 
@@ -3206,6 +3531,104 @@ def _zone_cache_json(zones: Optional[List[Dict[str, Any]]]) -> str:
     return json.dumps(active, sort_keys=True, separators=(",", ":"))
 
 
+PrimaryPaths = Tuple[
+    PathResult,
+    PathResult,
+    List[Tuple[str, Dict[int, float], float]],
+    Dict[int, float],
+]
+
+
+def _compute_primary_paths(
+    src_node: int,
+    dst_node: int,
+    zones_json: str,
+    vehicle_type: str,
+    network_congestion_score: float,
+    weather: int,
+    route_preference: str,
+    learning_snapshot: LearningSnapshot,
+    default_congestion_estimate: Optional[EdgeCongestionEstimate],
+    approved_override_snapshot: Optional[ApprovedGraphOverrideSnapshot],
+) -> Optional[PrimaryPaths]:
+    """Compute the baseline and zone-aware primary paths exactly once."""
+    zones = json.loads(zones_json)
+    baseline = astar_detailed(
+        src_node, dst_node, vehicle_type=vehicle_type,
+        default_congestion_estimate=default_congestion_estimate,
+        network_congestion_score=network_congestion_score, weather=weather,
+        route_preference=route_preference,
+        learning_snapshot=learning_snapshot,
+        approved_override_snapshot=approved_override_snapshot,
+    )
+    if baseline is None:
+        return None
+    zone_node_sets = _all_zone_node_sets(zones) if zones else []
+    congestion_scores = _zone_congestion_scores(zone_node_sets)
+    result = astar_detailed(
+        src_node, dst_node, vehicle_type=vehicle_type,
+        congestion_scores=congestion_scores,
+        default_congestion_estimate=default_congestion_estimate,
+        network_congestion_score=network_congestion_score, weather=weather,
+        route_preference=route_preference,
+        learning_snapshot=learning_snapshot,
+        approved_override_snapshot=approved_override_snapshot,
+    ) if congestion_scores else baseline
+    if result is None:
+        result = baseline
+    return baseline, result, zone_node_sets, congestion_scores
+
+
+@lru_cache(maxsize=128)
+def _primary_paths_cached(
+    src_node: int,
+    dst_node: int,
+    zones_json: str,
+    vehicle_type: str,
+    network_congestion_score: float,
+    weather: int,
+    route_preference: str,
+    learning_snapshot: LearningSnapshot,
+    default_congestion_estimate: Optional[EdgeCongestionEstimate],
+    approved_override_snapshot: Optional[ApprovedGraphOverrideSnapshot],
+) -> Optional[PrimaryPaths]:
+    return _compute_primary_paths(
+        src_node, dst_node, zones_json, vehicle_type,
+        network_congestion_score, weather, route_preference,
+        learning_snapshot, default_congestion_estimate,
+        approved_override_snapshot,
+    )
+
+
+def _primary_paths_for_route(
+    src_node: int,
+    dst_node: int,
+    zones_json: str,
+    vehicle_type: str,
+    network_congestion_score: float,
+    weather: int,
+    route_preference: str,
+    learning_snapshot: LearningSnapshot,
+    default_congestion_estimate: Optional[EdgeCongestionEstimate],
+    approved_override_snapshot: Optional[ApprovedGraphOverrideSnapshot],
+    *,
+    reuse_primary_cache: bool,
+) -> Optional[PrimaryPaths]:
+    if reuse_primary_cache:
+        return _primary_paths_cached(
+            src_node, dst_node, zones_json, vehicle_type,
+            network_congestion_score, weather, route_preference,
+            learning_snapshot, default_congestion_estimate,
+            approved_override_snapshot,
+        )
+    return _compute_primary_paths(
+        src_node, dst_node, zones_json, vehicle_type,
+        network_congestion_score, weather, route_preference,
+        learning_snapshot, default_congestion_estimate,
+        approved_override_snapshot,
+    )
+
+
 @lru_cache(maxsize=128)
 def _route_between_nodes_cached(
     src_node: int,
@@ -3221,6 +3644,9 @@ def _route_between_nodes_cached(
     learning_snapshot: LearningSnapshot,
     default_congestion_estimate: Optional[EdgeCongestionEstimate] = None,
     approved_override_snapshot: Optional[ApprovedGraphOverrideSnapshot] = None,
+    alternative_max_searches: Optional[int] = None,
+    alternative_time_budget_ms: Optional[float] = None,
+    alternative_max_settled_states: Optional[int] = None,
 ) -> Optional[Dict[str, Any]]:
     zones = json.loads(zones_json)
     return _route_between_nodes_uncached(
@@ -3237,7 +3663,22 @@ def _route_between_nodes_cached(
         route_preference=route_preference,
         learning_snapshot=learning_snapshot,
         approved_override_snapshot=approved_override_snapshot,
+        reuse_primary_cache=True,
+        alternative_max_searches=alternative_max_searches,
+        alternative_time_budget_ms=alternative_time_budget_ms,
+        alternative_max_settled_states=alternative_max_settled_states,
     )
+
+
+_route_between_nodes_cache_clear = _route_between_nodes_cached.cache_clear
+
+
+def _clear_route_result_caches() -> None:
+    _route_between_nodes_cache_clear()
+    _primary_paths_cached.cache_clear()
+
+
+_route_between_nodes_cached.cache_clear = _clear_route_result_caches  # type: ignore[attr-defined]
 
 
 def route_between_nodes(
@@ -3253,6 +3694,9 @@ def route_between_nodes(
     weather: int = 0,
     route_preference: str = "BALANCED",
     approved_override_snapshot: Optional[ApprovedGraphOverrideSnapshot] = None,
+    alternative_max_searches: Optional[int] = None,
+    alternative_time_budget_ms: Optional[float] = None,
+    alternative_max_settled_states: Optional[int] = None,
 ) -> Optional[Dict[str, Any]]:
     """Route arbitrary snapped endpoints with a bounded, copy-safe cache."""
     learning_snapshot = _current_learning_snapshot()
@@ -3276,6 +3720,15 @@ def route_between_nodes(
         learning_snapshot,
         default_congestion_estimate,
         approved_override_snapshot,
+        *(
+            _alternative_budget(
+                alternative_max_searches,
+                alternative_time_budget_ms,
+                alternative_max_settled_states,
+            )
+            if include_alternatives
+            else (None, None, None)
+        ),
     )
     # The solver may replace provider geometry in its local result envelope;
     # never let that mutation corrupt a later cache hit.
