@@ -6,8 +6,27 @@
   --warm-card: #fffdf8;
   --deep-water: #123f48;
   --lagoon: #2d9899;
+  --green-text: #176e73;
   --bg-primary: var(--sand);
   --text-primary: var(--deep-water);
+  --text-muted: #64777a;
+
+  --status-red-background: #fef2f2;
+  --status-red-border: #fecaca;
+  --status-red-text: #991b1b;
+  --status-orange-background: #fff7ed;
+  --status-orange-border: #fed7aa;
+  --status-orange-text: #9a3412;
+  --status-green-background: #f0fdf4;
+  --status-green-border: #bbf7d0;
+  --status-green-text: #166534;
+  --status-blue-background: #eff6ff;
+  --status-blue-border: #bfdbfe;
+  --status-blue-text: #1e40af;
+  --status-gray-background: #f9fafb;
+  --status-gray-border: #d1d5db;
+  --status-gray-text: #374151;
+
   --font-heading: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
   --font-body: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
 }
@@ -72,6 +91,133 @@ h2 {
   height: 100dvh;
   flex-direction: column;
   overflow: hidden;
+}
+
+.application-header {
+  position: sticky;
+  top: 0;
+  z-index: 1000;
+  flex: 0 0 auto;
+  border-bottom: 1px solid rgba(0, 110, 120, 0.16);
+  background: rgba(255, 253, 247, 0.92);
+  box-shadow: 0 10px 28px -27px rgba(18, 63, 72, 0.68);
+  backdrop-filter: blur(20px) saturate(150%);
+  -webkit-backdrop-filter: blur(20px) saturate(150%);
+}
+
+.application-header__content {
+  display: flex;
+  width: 100%;
+  min-height: 78px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px;
+}
+
+.application-brand {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.application-brand__name {
+  white-space: nowrap;
+}
+
+.application-brand__name span {
+  color: var(--green-text);
+}
+
+.application-brand__tagline {
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 0.67rem;
+  font-weight: 650;
+  letter-spacing: 0.045em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.system-status-card {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid;
+  border-radius: 16px;
+}
+
+.system-status-card__indicator {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 12px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.system-status-card__content {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  line-height: 1.2;
+}
+
+.system-status-card__content strong,
+.system-status-card__content > span {
+  white-space: nowrap;
+}
+
+.system-status-card--red {
+  border-color: var(--status-red-border);
+  background: var(--status-red-background);
+  color: var(--status-red-text);
+}
+
+.system-status-card--orange {
+  border-color: var(--status-orange-border);
+  background: var(--status-orange-background);
+  color: var(--status-orange-text);
+}
+
+.system-status-card--green {
+  border-color: var(--status-green-border);
+  background: var(--status-green-background);
+  color: var(--status-green-text);
+}
+
+.system-status-card--blue {
+  border-color: var(--status-blue-border);
+  background: var(--status-blue-background);
+  color: var(--status-blue-text);
+}
+
+.system-status-card--gray {
+  border-color: var(--status-gray-border);
+  background: var(--status-gray-background);
+  color: var(--status-gray-text);
+}
+
+.system-status-card__content > span {
+  margin-top: 4px;
+  color: var(--text-muted);
+}
+
+@media (max-width: 520px) {
+  .application-header__content {
+    min-height: 64px;
+    padding: 8px 16px;
+  }
+
+  .application-brand__tagline,
+  .system-status-card__content > span {
+    display: none;
+  }
+
+  .system-status-card {
+    padding: 8px;
+  }
 }
 
 ::selection {

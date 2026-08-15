@@ -13,3 +13,16 @@ describe('global typography', () => {
     expect(stylesheet).not.toMatch(/h[3-6]\s*[,{]/);
   });
 });
+
+describe('status palette', () => {
+  it.each(['red', 'orange', 'green', 'blue', 'gray'])('defines %s status colors', (tone) => {
+    expect(stylesheet).toContain(`--status-${tone}-background:`);
+    expect(stylesheet).toContain(`--status-${tone}-border:`);
+    expect(stylesheet).toContain(`--status-${tone}-text:`);
+  });
+
+  it('does not restore the reference border or sunset tokens', () => {
+    expect(stylesheet).not.toContain('--border-color');
+    expect(stylesheet).not.toContain('--sunset');
+  });
+});
