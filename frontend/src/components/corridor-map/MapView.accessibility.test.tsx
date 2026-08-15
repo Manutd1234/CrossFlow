@@ -144,6 +144,36 @@ afterEach(() => {
 });
 
 describe('MapView traffic overlay controls', () => {
+  it('does not render fallback corridors while backend route geometry is loading', () => {
+    const container = renderIntoDom(
+      <MapView
+        corridors={TEST_CORRIDORS}
+        routes={[]}
+        routesLoading
+        trafficSnapshot={null}
+        onSelectCorridor={vi.fn()}
+      />,
+    );
+
+    // No corridor casing or endpoint fallback is added until the backend
+    // request settles.
+    expect(L.polyline).not.toHaveBeenCalled();
+
+    act(() => root?.render(
+      <MapView
+        corridors={TEST_CORRIDORS}
+        routes={[]}
+        routesLoading={false}
+        trafficSnapshot={null}
+        onSelectCorridor={vi.fn()}
+      />,
+    ));
+
+    expect(container).not.toBeNull();
+    expect(L.polyline).toHaveBeenCalledTimes(10);
+    expect(vi.mocked(L.polyline).mock.calls[1][1]).toMatchObject({ dashArray: '8, 6' });
+  });
+
   it('disables wheel zoom in the small-width layout', () => {
     const mediaQuery = {
       matches: true,

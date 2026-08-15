@@ -41,7 +41,7 @@ function LoadingPanel() {
 
 const VIEW_META: Record<AppTab, { title: string; description: string }> = {
   map: {
-    title: 'Batam Congestion watch',
+    title: 'Batam Congestion Watch',
     description: 'Scan 30 photo-backed planning hotspots and move directly from an area to route planning.',
   },
   route: {
@@ -68,6 +68,7 @@ export function App() {
     () => window.sessionStorage?.getItem('crossflow.guest') === '1',
   );
   const [routes, setRoutes] = useState<CorridorRoute[]>([]);
+  const [routesLoading, setRoutesLoading] = useState(true);
   const [corridors, setCorridors] = useState<Corridor[]>(INITIAL_CORRIDORS);
   const [ferries, setFerries] = useState<FerrySchedule[]>(INITIAL_FERRIES);
   const [ferryTimetable, setFerryTimetable] = useState<FerryTimetableMetadata>(
@@ -191,11 +192,19 @@ export function App() {
   // once. The corridor geometry is what lets the map draw the corridor the
   // Corridor tab is reporting congestion for.
   useEffect(() => {
+    let cancelled = false;
     Promise.all([fetchCorridorRoutes(), fetchRouteLocations()])
       .then(([corridorRoutes, locations]) => {
+        if (cancelled) return;
         setRoutes(corridorRoutes.data);
         setRouteLocations(locations.data);
+      })
+      .finally(() => {
+        if (!cancelled) setRoutesLoading(false);
       });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   /**
@@ -248,7 +257,9 @@ export function App() {
   // resolve a role from it.
   const signInAvailable = supabaseConfigured()
     && (authStatus === null || authStatus.enabled);
-  const driverAccess = isGuest || identity?.role.toLowerCase() === 'driver';
+  // Guest mode is the only restricted experience. Every authenticated account
+  // is an administrator and receives the complete workspace navigation.
+  const driverAccess = isGuest;
 
   const visibleActiveTab: AppTab = driverAccess && activeTab === 'analytics'
     ? 'map'
@@ -354,6 +365,7 @@ export function App() {
                 <MapView
                   corridors={corridors}
                   routes={routes}
+                  routesLoading={routesLoading}
                   trafficSnapshot={trafficSnapshot}
                   onSelectCorridor={handleSelectCorridorAndSolve}
                 />

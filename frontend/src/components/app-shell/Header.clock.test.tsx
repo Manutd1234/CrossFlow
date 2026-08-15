@@ -19,6 +19,33 @@ afterEach(() => {
 });
 
 describe('header Batam clock', () => {
+  it('renders the restored-session account control without opening the sign-in panel', () => {
+    const container = document.createElement('div');
+    document.body.append(container);
+    root = createRoot(container);
+    act(() => root?.render(
+      <Header
+        onOpenSignIn={vi.fn()}
+        identity={{
+          user_id: 'admin-1',
+          display_name: 'Admin User',
+          role: 'admin',
+          expires_at: 1,
+          role_source: 'crossflow_profiles',
+        }}
+        signInAvailable
+        activeTab="map"
+        setActiveTab={vi.fn()}
+        dataSource="simulated"
+      />,
+    ));
+
+    const accountButton = container.querySelector<HTMLButtonElement>('.app-signin-button');
+    expect(accountButton).not.toBeNull();
+    expect(accountButton?.getAttribute('aria-label')).toContain('role Admin');
+    expect(accountButton?.querySelector('svg')).not.toBeNull();
+  });
+
   it('rolls forward once per second from the latest backend timestamp', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-08-09T07:30:00Z'));

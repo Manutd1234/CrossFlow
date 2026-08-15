@@ -106,4 +106,22 @@ describe('vehicle profile selection', () => {
     expect(waypoint?.textContent).toContain('Stop 1');
     expect(container.querySelector<HTMLButtonElement>('[aria-label="Remove stop 1"]')).not.toBeNull();
   });
+
+  it('limits a route to three intermediate stops and five locations total', () => {
+    const container = renderIntoDom(<VehicleHarness />);
+    const add = container.querySelector<HTMLButtonElement>('.route-add-stop-button');
+
+    act(() => {
+      add?.click();
+      add?.click();
+      add?.click();
+    });
+
+    expect(container.querySelectorAll('.route-waypoint-row')).toHaveLength(3);
+    expect(add?.disabled).toBe(true);
+    expect(add?.title).toContain('5 locations total');
+
+    act(() => add?.click());
+    expect(container.querySelectorAll('.route-waypoint-row')).toHaveLength(3);
+  });
 });

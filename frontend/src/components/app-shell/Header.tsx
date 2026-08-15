@@ -5,6 +5,7 @@ import type { AuthSession, DataSource, Provenance } from '../../types';
 import { toBatamIso } from '../../utils/batamTime';
 import { formatClock } from '../../utils/format';
 import { Navigation, type AppTab } from './Navigation';
+import './Header.css';
 
 interface HeaderProps {
   onOpenSignIn: () => void;
@@ -127,7 +128,7 @@ export function Header({
               onClick={onOpenSignIn}
               aria-haspopup="dialog"
               aria-label={identity
-                ? `Signed in as ${identity.display_name || identity.user_id}, role ${identity.role}. Open account panel`
+                ? `Signed in as ${identity.display_name || identity.user_id}, role Admin. Open account panel`
                 : 'Sign in to CrossFlow'}
               title={identity ? 'Account' : 'Sign in'}
             >

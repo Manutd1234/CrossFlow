@@ -100,6 +100,7 @@ const VEHICLE_OPTIONS_BY_GROUP = VEHICLE_GROUPS.map((group) => ({
 }));
 
 const PRIMARY_ROUTE_ID = 'primary';
+const MAX_INTERMEDIATE_STOPS = 3;
 type RouteResultTab = 'summary' | 'journey' | 'directions' | 'connections';
 
 interface SelectableRoadRoute extends RoadRouteOption {
@@ -319,7 +320,9 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
   };
 
   const addWaypoint = () => {
-    setWaypoints((current) => [...current, null]);
+    setWaypoints((current) => (
+      current.length < MAX_INTERMEDIATE_STOPS ? [...current, null] : current
+    ));
     invalidateResult();
   };
 
@@ -748,8 +751,11 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
                 type="button"
                 className="route-add-stop-button"
                 onClick={addWaypoint}
+                disabled={waypoints.length >= MAX_INTERMEDIATE_STOPS}
                 aria-label="Add an intermediate stop"
-                title="Add an intermediate stop"
+                title={waypoints.length >= MAX_INTERMEDIATE_STOPS
+                  ? 'Routes support up to 3 intermediate stops (5 locations total)'
+                  : 'Add an intermediate stop'}
               >
                 <Plus size={ICON_SIZE.large} aria-hidden="true" />
               </button>

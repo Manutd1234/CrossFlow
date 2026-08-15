@@ -251,7 +251,7 @@ The interactive API is available at `http://localhost:8000` (OpenAPI UI at
 |---|---|
 | `POST /api/optimize-route` | A named `corridor_id`, or both `origin_id` and `destination_id`, plus the required `vehicle_type`. |
 | `POST /api/optimize-free-route` | Required `origin_lat`, `origin_lng`, `destination_lat`, and `destination_lng`; optional display names and route settings. |
-| `POST /api/optimize-multi-stop-route` | An ordered `stops` array with 3–8 stops. Each stop has `lat`, `lng`, optional `name`, and optional `dwell_mins`; `optimize_order` defaults to `false`. |
+| `POST /api/optimize-multi-stop-route` | An ordered `stops` array with 3–5 stops (origin, destination, and up to 3 intermediate stops). Each stop has `lat`, `lng`, optional `name`, and optional `dwell_mins`; `optimize_order` defaults to `false`. |
 
 All three request types also accept `weather` (`0` clear, `1` rain, `2`
 storm), `route_preference` (`BALANCED`, `FASTEST`, `SHORTEST`, `EASY`, or
