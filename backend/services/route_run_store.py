@@ -21,7 +21,9 @@ from services import supabase_server
 
 
 TABLE_NAME = "crossflow_route_runs"
-REST_PATH = f"rest/v1/{TABLE_NAME}"
+# The leading slash is required: supabase_server validates against
+# ``^/rest/v1/...`` and rejects anything else as invalid_rest_path.
+REST_PATH = f"/rest/v1/{TABLE_NAME}"
 # A route envelope carries full geometry, so one row is far larger than the
 # small-record defaults the other stores rely on.
 SINGLE_ROW_MAX_BYTES = 4 * 1024 * 1024

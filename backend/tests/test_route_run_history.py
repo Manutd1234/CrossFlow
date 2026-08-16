@@ -107,6 +107,41 @@ class RouteRunHistoryScopeTests(unittest.TestCase):
         self.assertIn("not configured", caught.exception.detail)
 
 
+class SharedStoreTransportTests(unittest.TestCase):
+    """The store's REST contract with supabase_server.
+
+    A malformed path fails soft, exactly like an unreachable project, so the
+    only symptom is history silently staying empty. That is indistinguishable
+    from "no runs yet" in the UI, so it is pinned here instead.
+    """
+
+    def test_rest_path_satisfies_the_transport_validator(self) -> None:
+        from services import supabase_server
+
+        self.assertIsNotNone(
+            supabase_server._REST_PATH.fullmatch(route_run_store.REST_PATH),
+            f"{route_run_store.REST_PATH!r} would be rejected as invalid_rest_path",
+        )
+
+    def test_rest_path_targets_the_documented_table(self) -> None:
+        self.assertEqual(
+            route_run_store.REST_PATH, f"/rest/v1/{route_run_store.TABLE_NAME}",
+        )
+
+    def test_store_reports_unconfigured_rather_than_raising(self) -> None:
+        """A missing Supabase project must never break route planning."""
+        with patch.object(route_run_store, "_config", return_value=None):
+            self.assertFalse(route_run_store.save(
+                "a" * 64, "ABCDEFG", "optimize-route", {}, {},
+            ))
+            self.assertIsNone(route_run_store.get("a" * 64))
+            self.assertEqual(route_run_store.recent(), [])
+
+    def test_get_rejects_keys_that_are_neither_id_nor_code(self) -> None:
+        for bad_key in ("", "short", "x" * 63, 12345):
+            self.assertIsNone(route_run_store.get(bad_key))  # type: ignore[arg-type]
+
+
 class DriverRouteRetrievalTests(unittest.TestCase):
     """A dispatch code is the capability, and grants exactly one route."""
 
