@@ -4004,11 +4004,17 @@ a:focus-visible {
 /* Point-to-point route planner */
 .route-planner-layout {
   align-items: start;
+  /* The history panel gets a named row of its own. Without one it was auto
+     placed into an implicit row, which left the result column ending level
+     with the form and a band of empty page beneath it. */
   grid-template-areas:
     "mode result"
-    "sidebar result";
+    "sidebar result"
+    "history result";
   grid-template-columns: minmax(320px, var(--app-sidebar-width)) minmax(0, 1fr);
-  grid-template-rows: auto minmax(0, 1fr);
+  /* The history row collapses to nothing when the panel is not rendered, so
+     the driver view and the Search tab keep the original two-row proportions. */
+  grid-template-rows: auto minmax(0, 1fr) auto;
 }
 
 .route-planner-layout--driver {
@@ -4611,7 +4617,8 @@ a:focus-visible {
     grid-template-areas:
       "mode"
       "sidebar"
-      "result";
+      "result"
+      "history";
     grid-template-columns: 1fr;
     grid-template-rows: auto;
   }

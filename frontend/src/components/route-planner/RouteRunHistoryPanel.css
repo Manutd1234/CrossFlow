@@ -2,6 +2,11 @@
    the shared theme rather than restating any colour of its own. */
 
 .route-run-history {
+  grid-area: history;
+  /* Stretch across the sidebar column and take the height its row is given,
+     so the list scrolls internally instead of pushing the page taller. */
+  align-self: stretch;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 10px;
