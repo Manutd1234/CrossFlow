@@ -12,13 +12,16 @@ import json
 import os
 import queue
 import re
+import ssl
 import threading
 import time
 from dataclasses import dataclass
 from typing import Any, Mapping, Optional
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlparse
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.request import (
+    HTTPRedirectHandler, HTTPSHandler, Request, build_opener,
+)
 
 
 DEFAULT_TIMEOUT_SECONDS = 5
@@ -60,7 +63,29 @@ class NoRedirectHandler(HTTPRedirectHandler):
         return None
 
 
-OPENER = build_opener(NoRedirectHandler())
+def _verified_https_handler() -> Optional[HTTPSHandler]:
+    """Verify TLS against certifi's bundle rather than the platform's.
+
+    A stock python.org install on macOS ships no usable CA store until its
+    ``Install Certificates`` script is run, so every request fails with
+    CERTIFICATE_VERIFY_FAILED. Because callers flatten that to a generic
+    network error, the symptom is indistinguishable from an unconfigured
+    project. certifi is already a pinned dependency, so preferring it makes
+    verification behave the same on a developer's laptop and in the deployed
+    Linux runtime. Verification is never weakened: if certifi is somehow
+    absent, fall back to the platform default rather than trusting anything.
+    """
+    try:
+        import certifi
+    except ImportError:  # pragma: no cover - certifi is a pinned dependency
+        return None
+    return HTTPSHandler(context=ssl.create_default_context(cafile=certifi.where()))
+
+
+OPENER = build_opener(*(
+    handler for handler in (NoRedirectHandler(), _verified_https_handler())
+    if handler is not None
+))
 
 _REST_PATH = re.compile(
     r"^/rest/v1/[A-Za-z0-9_.~-]+(?:/[A-Za-z0-9_.~-]+)*$",

@@ -1456,6 +1456,19 @@ def api_route_history(
     # Only an administrator may see other accounts' runs.
     created_by = None if user.is_admin and not mine else user.id
     runs = route_run_store.recent(limit, created_by=created_by)
+    # The store fails soft, so a project that is configured but whose table is
+    # missing returns an empty list indistinguishable from "nothing planned
+    # yet". Report that as the setup gap it is, naming the migration to run.
+    if not runs and route_run_store.available() is False:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Shared route history is unreachable "
+                f"(reason: {route_run_store.failure_reason()}). If this is "
+                "http_404 the crossflow_route_runs table does not exist yet; "
+                "run backend/data/route_runs.sql in the Supabase SQL editor."
+            ),
+        )
     if response is not None:
         for header, value in _ROUTE_NO_STORE_HEADERS.items():
             response.headers[header] = value

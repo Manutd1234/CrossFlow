@@ -94,6 +94,40 @@ class RouteRunHistoryScopeTests(unittest.TestCase):
                 )
         self.assertEqual(caught.exception.status_code, 401)
 
+    def test_missing_table_is_reported_rather_than_shown_as_no_runs(self) -> None:
+        """An empty list from a reachable-but-broken store is a lie.
+
+        The store fails soft, so a project whose table was never created looks
+        exactly like one where nobody has planned anything. The response must
+        name the migration instead.
+        """
+        with patch.object(identity, "auth_enabled", return_value=True), \
+                patch.object(identity, "require_user", return_value=user("a", "admin")), \
+                patch.object(route_run_store, "configured", return_value=True), \
+                patch.object(route_run_store, "recent", return_value=[]), \
+                patch.object(route_run_store, "available", return_value=False), \
+                patch.object(route_run_store, "failure_reason", return_value="http_404"):
+            with self.assertRaises(HTTPException) as caught:
+                api_main.api_route_history(
+                    response=None, limit=10, mine=False, authorization="Bearer token",
+                )
+        self.assertEqual(caught.exception.status_code, 503)
+        self.assertIn("route_runs.sql", caught.exception.detail)
+        self.assertIn("http_404", caught.exception.detail)
+
+    def test_a_genuinely_empty_history_still_succeeds(self) -> None:
+        """No runs yet is a 200 with an empty list, not an error."""
+        with patch.object(identity, "auth_enabled", return_value=True), \
+                patch.object(identity, "require_user", return_value=user("a", "admin")), \
+                patch.object(route_run_store, "configured", return_value=True), \
+                patch.object(route_run_store, "recent", return_value=[]), \
+                patch.object(route_run_store, "available", return_value=True):
+            payload = api_main.api_route_history(
+                response=None, limit=10, mine=False, authorization="Bearer token",
+            )
+        body = payload.get("data", payload)
+        self.assertEqual(body["runs"], [])
+
     def test_history_reports_unconfigured_backend_rather_than_empty(self) -> None:
         """An empty list would read as "no runs"; the cause must stay visible."""
         with patch.object(identity, "auth_enabled", return_value=True), \
