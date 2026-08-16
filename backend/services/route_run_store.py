@@ -72,16 +72,22 @@ def _mark_success() -> None:
     _last_failure_reason = None
 
 
+#: Distinguishes a failed request from one that legitimately returned no body.
+#: A ``return=minimal`` upsert answers 204 with an empty payload, so ``None``
+#: alone would report every successful write as a failure.
+_FAILED = object()
+
+
 def _request(**kwargs: Any) -> Any:
     config = _config()
     if config is None:
         _mark_failure("not_configured")
-        return None
+        return _FAILED
     try:
         result = supabase_server.request_json(config, **kwargs)
     except supabase_server.SupabaseServerError as error:
         _mark_failure(error.code)
-        return None
+        return _FAILED
     _mark_success()
     return result
 
@@ -123,7 +129,7 @@ def save(
         prefer="resolution=merge-duplicates,return=minimal",
         max_response_bytes=SINGLE_ROW_MAX_BYTES,
     )
-    return result is not None
+    return result is not _FAILED
 
 
 def get(route_key: str) -> Optional[Dict[str, Any]]:
@@ -142,7 +148,9 @@ def get(route_key: str) -> Optional[Dict[str, Any]]:
         query={column: f"eq.{route_key}", "select": "response", "limit": "1"},
         max_response_bytes=SINGLE_ROW_MAX_BYTES,
     )
-    if not isinstance(rows, list) or not rows or not isinstance(rows[0], dict):
+    if rows is _FAILED or not isinstance(rows, list) or not rows:
+        return None
+    if not isinstance(rows[0], dict):
         return None
     envelope = rows[0].get("response")
     return envelope if isinstance(envelope, dict) else None
@@ -167,7 +175,7 @@ def recent(
     if created_by:
         query["created_by"] = f"eq.{created_by}"
     rows = _request(method="GET", rest_path=REST_PATH, query=query)
-    if not isinstance(rows, list):
+    if rows is _FAILED or not isinstance(rows, list):
         return []
     return [row for row in rows if isinstance(row, dict)]
 

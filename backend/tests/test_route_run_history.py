@@ -162,6 +162,34 @@ class SharedStoreTransportTests(unittest.TestCase):
             route_run_store.REST_PATH, f"/rest/v1/{route_run_store.TABLE_NAME}",
         )
 
+    def test_save_reports_success_for_an_empty_204_body(self) -> None:
+        """``return=minimal`` answers 204 with no body.
+
+        Treating an absent payload as failure reported every successful write
+        as a failure, which is only invisible because the caller ignores the
+        result and the row lands anyway.
+        """
+        from services import supabase_server
+
+        with patch.object(route_run_store, "_config", return_value=object()), \
+                patch.object(supabase_server, "request_json", return_value=None):
+            self.assertTrue(route_run_store.save(
+                "a" * 64, "ABCDEFG", "optimize-route", {}, {},
+            ))
+
+    def test_save_reports_failure_when_the_transport_rejects_it(self) -> None:
+        from services import supabase_server
+
+        with patch.object(route_run_store, "_config", return_value=object()), \
+                patch.object(
+                    supabase_server, "request_json",
+                    side_effect=supabase_server.SupabaseServerError("http_404"),
+                ):
+            self.assertFalse(route_run_store.save(
+                "a" * 64, "ABCDEFG", "optimize-route", {}, {},
+            ))
+        self.assertEqual(route_run_store.failure_reason(), "http_404")
+
     def test_store_reports_unconfigured_rather_than_raising(self) -> None:
         """A missing Supabase project must never break route planning."""
         with patch.object(route_run_store, "_config", return_value=None):
