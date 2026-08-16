@@ -41,7 +41,15 @@ const API_ENABLED = import.meta.env.VITE_API_ENABLED !== 'false';
 // a route, so the previous 6s corridor budget abandoned a response that was
 // about to arrive and reported the backend as unavailable.
 const CORRIDOR_TIMEOUT_MS = 20_000;
-const ROUTE_TIMEOUT_MS = 60_000;
+const ROUTE_TIMEOUT_MS = 120_000;
+
+// Every extra stop adds a full A* over the 115k-node graph, and whole-journey
+// alternatives re-solve the longest legs on top of that. Measured on a
+// five-stop Batam journey: 90s warm, and more on a cold worker. The previous
+// 60s budget aborted mid-solve, and the client reported the abandoned request
+// as "the backend returned an invalid multi-stop route" — a correct response
+// that simply arrived after nobody was listening.
+const MULTI_STOP_TIMEOUT_MS = 240_000;
 const FERRY_REFRESH_TIMEOUT_MS = 20_000;
 const FERRY_TERMINAL_MATCH_KM = 0.5;
 
@@ -1585,7 +1593,7 @@ export async function requestMultiStopRouteOptimization(
   routePreference: RoutePreference = 'BALANCED',
 ): Promise<Fetched<RouteOptimizationResult>> {
   const payload = await getJSON<Envelope & RouteOptimizationResult>(
-    '/api/optimize-multi-stop-route', ROUTE_TIMEOUT_MS, {
+    '/api/optimize-multi-stop-route', MULTI_STOP_TIMEOUT_MS, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1601,7 +1609,16 @@ export async function requestMultiStopRouteOptimization(
       }),
     }, true,
   ).then(validatedRoadPayload);
-  if (!payload) throw new ApiRequestError('The backend returned an invalid multi-stop route.', 503);
+  // An aborted request and a malformed body both arrive here as a null payload,
+  // and blaming the backend for a response the client stopped waiting for sent
+  // this in exactly the wrong direction once already.
+  if (!payload) {
+    throw new ApiRequestError(
+      'The multi-stop route did not arrive in time. Each stop adds a full '
+      + 'road search, so a journey with several stops can take a few minutes.',
+      504,
+    );
+  }
   if (typeof payload.route_code !== 'string' || !/^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{7}$/.test(payload.route_code)) {
     throw new ApiRequestError('The backend returned no valid seven-character route code.', 503);
   }

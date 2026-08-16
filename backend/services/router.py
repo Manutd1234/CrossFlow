@@ -1202,6 +1202,8 @@ def _main_routing_core(
 # module graph without retaining features from the committed graph.
 def _clear_routing_view_cache() -> None:
     _routing_view.cache_clear()
+    _DECISION_TARGETS.clear()
+    _node_bearing.cache_clear()
     static_cache = globals().get("_static_edge_features")
     if static_cache is not None:
         static_cache.cache_clear()
@@ -1736,6 +1738,46 @@ def _static_edge_features(
     return MappingProxyType(features)
 
 
+@lru_cache(maxsize=1_000_000)
+def _node_bearing(source: int, target: int) -> float:
+    """Bearing between two node ids, memoized.
+
+    A* re-derives the same junction geometry millions of times per journey and
+    the graph is immutable within a request, so the trigonometry is pure and
+    worth caching. Keyed on ids rather than coordinates because ids are small
+    ints and already unique per position.
+    """
+    return _bearing(NODES[source], NODES[target])
+
+
+#: Per-view junction fan-out, keyed by ``id(adjacency)``. The owning mapping is
+#: retained alongside each entry so its id cannot be recycled onto a different
+#: object while the cache still holds it. Cleared with the routing-view cache.
+_DECISION_TARGETS: Dict[int, Tuple[Any, Dict[int, frozenset[int]]]] = {}
+
+
+def _decision_targets(
+    adjacency_key: int,
+    node: int,
+    adjacency: Mapping[int, Tuple[RoadEdge, ...]],
+) -> frozenset[int]:
+    """Distinct onward targets at ``node`` within one pre-filtered view.
+
+    Memoized per (view, node): a routing view is immutable for the life of a
+    request, so the answer cannot change underneath us, while keying on the
+    view keeps two vehicle profiles from sharing an entry.
+    """
+    entry = _DECISION_TARGETS.get(adjacency_key)
+    if entry is None or entry[0] is not adjacency:
+        entry = (adjacency, {})
+        _DECISION_TARGETS[adjacency_key] = entry
+    targets = entry[1].get(node)
+    if targets is None:
+        targets = frozenset(edge.target for edge in adjacency.get(node, ()))
+        entry[1][node] = targets
+    return targets
+
+
 def _turn_cost_s(
     previous_source: Optional[int],
     node: int,
@@ -1753,20 +1795,24 @@ def _turn_cost_s(
     if previous_source is None or previous_edge is None:
         return 0.0, 0.0, signal
 
-    incoming = _bearing(NODES[previous_source], NODES[node])
-    outgoing = _bearing(NODES[node], NODES[edge.target])
+    incoming = _node_bearing(previous_source, node)
+    outgoing = _node_bearing(node, edge.target)
     magnitude = abs(_signed_turn(incoming, outgoing))
     road_changed = not _same_road(previous_edge, edge)
-    candidates = (eligible_adjacency or ROAD_ADJ).get(node, ())
-    legal_choices = {
-        candidate.target for candidate in candidates
-        if candidate.target != previous_source
-        and (
-            eligible_adjacency is not None
-            or edge_traversal_decision(candidate, profile).allowed
-        )
-    }
-    is_decision = len(legal_choices) > 1
+    if eligible_adjacency is not None:
+        # Hot path: A* passes a pre-filtered view, so every candidate is
+        # already legal and the distinct targets depend only on the node.
+        # Rebuilding that set per edge relaxation dominated the search.
+        targets = _decision_targets(id(eligible_adjacency), node, eligible_adjacency)
+        is_decision = len(targets - {previous_source}) > 1
+    else:
+        candidates = ROAD_ADJ.get(node, ())
+        legal_choices = {
+            candidate.target for candidate in candidates
+            if candidate.target != previous_source
+            and edge_traversal_decision(candidate, profile).allowed
+        }
+        is_decision = len(legal_choices) > 1
     if not road_changed and not (is_decision and magnitude >= 35.0):
         return 0.0, 0.0, signal
 
