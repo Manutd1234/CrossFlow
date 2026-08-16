@@ -840,12 +840,23 @@ def _latest_feasible_departure(
     max_search_hours: int = 48,
     iterations: int = 8,
 ) -> Dict[str, Any]:
-    """Bounded monotonic search for the latest departure meeting a deadline."""
+    """Bounded monotonic search for the latest departure meeting a deadline.
+
+    ``solve(candidate)`` is a probe: the search reads its arrival time and
+    discards everything else, so probes may omit any work that arrival time
+    does not depend on. Only the departure that wins is re-solved with
+    ``full=True``, because that one result is what the caller returns.
+
+    Probing in full detail meant paying for whole-journey alternatives on all
+    nine probes and throwing eight of those sets away. Measured on the
+    three-stop Batam journey that reported this bug, alternatives are 22.5s of
+    each 28s solve, so a deadline cost 272s against a 240s client budget — the
+    plan was correct and arrived after nobody was waiting for it.
+    """
     local_now = now.astimezone(clock.BATAM_TZ)
     deadline = deadline.astimezone(clock.BATAM_TZ)
     low = max(local_now, deadline - timedelta(hours=max_search_hours))
     high = deadline
-    best: Optional[Dict[str, Any]] = None
     first = solve(low)
     first_arrival = datetime.fromisoformat(first["estimated_arrival"])
     if first_arrival > deadline:
@@ -855,7 +866,8 @@ def _latest_feasible_departure(
         # the traveller still needs its route, distance and stops. Return the
         # earliest-departure plan and say plainly that the requested arrival
         # cannot be met, rather than making them guess by how much.
-        first["schedule_feasibility"] = {
+        earliest = solve(low, full=True)
+        earliest["schedule_feasibility"] = {
             "requested_arrival": clock.iso(deadline),
             "meets_requested_arrival": False,
             "earliest_departure": clock.iso(low),
@@ -870,17 +882,19 @@ def _latest_feasible_departure(
                 "minutes later than requested."
             ),
         }
-        return first
-    best = first
+        return earliest
     for _ in range(iterations):
         candidate = low + (high - low) / 2
         result = solve(candidate)
         arrival = datetime.fromisoformat(result["estimated_arrival"])
         if arrival <= deadline:
-            best = result
             low = candidate
         else:
             high = candidate
+    # ``low`` is the latest departure a probe proved feasible: the initial
+    # earliest departure if no candidate improved on it, otherwise the last
+    # accepted candidate. That is the one worth solving properly.
+    best = solve(low, full=True)
     best["schedule_feasibility"] = {
         "requested_arrival": clock.iso(deadline),
         "meets_requested_arrival": True,
@@ -921,7 +935,7 @@ def optimize_route(corridor_id: Optional[str], vehicle_type: str, hour: int = 14
         departure_at, arrive_by, now,
     )
     if arrive_by is not None and not _schedule_search:
-        def solve(candidate: datetime) -> Dict[str, Any]:
+        def solve(candidate: datetime, *, full: bool = False) -> Dict[str, Any]:
             return optimize_route(
                 corridor_id=corridor_id,
                 vehicle_type=vehicle_type,
@@ -934,7 +948,7 @@ def optimize_route(corridor_id: Optional[str], vehicle_type: str, hour: int = 14
                 schedule_verified_at=schedule_verified_at,
                 approved_override_snapshot=approved_override_snapshot,
                 departure_at=candidate,
-                _schedule_search=True,
+                _schedule_search=not full,
             )
         result = _latest_feasible_departure(solve, now, arrive_by)
         planned = datetime.fromisoformat(result["planned_departure"])
@@ -1043,7 +1057,9 @@ def optimize_route(corridor_id: Optional[str], vehicle_type: str, hour: int = 14
         corridor, vehicle_type=vehicle_type, weather=weather,
         network_congestion_score=recommended_prediction["current_score"],
         default_congestion_estimate=recommended_congestion_estimate,
-        zones=recommended_zones, include_alternatives=True,
+        # A deadline probe is read for its arrival time alone, and alternatives
+        # only decorate the payload. See _latest_feasible_departure.
+        zones=recommended_zones, include_alternatives=not _schedule_search,
         route_preference=preference.key,
         approved_override_snapshot=approved_override_snapshot,
     )
@@ -1250,7 +1266,7 @@ def optimize_free_route(
         departure_at, arrive_by, now,
     )
     if arrive_by is not None and not _schedule_search:
-        def solve(candidate: datetime) -> Dict[str, Any]:
+        def solve(candidate: datetime, *, full: bool = False) -> Dict[str, Any]:
             return optimize_free_route(
                 origin_lat=origin_lat, origin_lng=origin_lng,
                 destination_lat=destination_lat, destination_lng=destination_lng,
@@ -1260,7 +1276,7 @@ def optimize_free_route(
                 schedule_verified_at=schedule_verified_at,
                 approved_override_snapshot=approved_override_snapshot,
                 leg_mode=leg_mode, departure_at=candidate,
-                _schedule_search=True,
+                _schedule_search=not full,
             )
         result = _latest_feasible_departure(solve, now, arrive_by)
         planned = datetime.fromisoformat(result["planned_departure"])
@@ -1392,10 +1408,12 @@ def optimize_free_route(
         raise ValueError("No drivable path connects those coordinates.")
     travel_now = round(_modeled_route_time_mins(route_now), 1)
 
-    if leg_mode:
+    if leg_mode or _schedule_search:
         # The journey owns the departure decision, so a leg reuses its own
         # conditions rather than searching a +30 minute alternative it has no
-        # authority to act on.
+        # authority to act on. A deadline probe is in the same position: it
+        # always carries an explicit departure_at, which forces `defer` to
+        # False below, so the +30 minute search can only ever be discarded.
         later = planned_departure
         surge_later, surge_source_later = surge, surge_source
         prediction_later, congestion_estimate_later = (
@@ -1457,7 +1475,10 @@ def optimize_free_route(
         route = router.route_between_nodes(
             src_node, dst_node, avoid_zones=recommended_zones,
             origin_name=origin_display, destination_name=dest_display,
-            include_alternatives=True, vehicle_type=vehicle_type,
+            # A deadline probe is read for its arrival time alone, and
+            # alternatives only decorate the payload the primary search
+            # already produced. See _latest_feasible_departure.
+            include_alternatives=not _schedule_search, vehicle_type=vehicle_type,
             network_congestion_score=recommended_prediction["current_score"],
             default_congestion_estimate=recommended_congestion_estimate,
             weather=weather,
@@ -2139,14 +2160,14 @@ def optimize_multi_stop_route(
         departure_at, arrive_by, now,
     )
     if arrive_by is not None and not _schedule_search:
-        def solve(candidate: datetime) -> Dict[str, Any]:
+        def solve(candidate: datetime, *, full: bool = False) -> Dict[str, Any]:
             return optimize_multi_stop_route(
                 stops=stops, vehicle_type=vehicle_type, hour=candidate.hour,
                 weather=weather, now=now, route_preference=route_preference,
                 optimize_order=optimize_order,
                 schedule_verified_at=schedule_verified_at,
                 approved_override_snapshot=approved_override_snapshot,
-                departure_at=candidate, _schedule_search=True,
+                departure_at=candidate, _schedule_search=not full,
             )
         result = _latest_feasible_departure(solve, now, arrive_by)
         planned = datetime.fromisoformat(result["planned_departure"])
@@ -2269,20 +2290,30 @@ def optimize_multi_stop_route(
 
     # Whole-journey alternatives, computed once the primary chain exists so a
     # failure here can never cost the caller the route they asked for.
-    multi_stop_alternatives, multi_stop_alternatives_note = (
-        _multi_stop_alternative_journeys(
-            legs=legs,
-            ordered=ordered,
-            profile=profile,
-            preference_key=preference.key,
-            weather=weather,
-            now=now,
-            schedule_verified_at=schedule_verified_at,
-            approved_override_snapshot=approved_override_snapshot,
-            journey_departure=journey_departure,
-            primary_emissions_kg=total_emissions_kg,
+    #
+    # A deadline probe is discarded except for its arrival time, which these
+    # cannot change: they re-solve the longest legs to offer a *different*
+    # chain, never to revise the one already chained above. Skipping them is
+    # 80% of the probe's cost, and the departure that wins the search is
+    # re-solved with ``full=True``, so the caller still gets its alternatives.
+    if _schedule_search:
+        multi_stop_alternatives: List[Dict[str, Any]] = []
+        multi_stop_alternatives_note = None
+    else:
+        multi_stop_alternatives, multi_stop_alternatives_note = (
+            _multi_stop_alternative_journeys(
+                legs=legs,
+                ordered=ordered,
+                profile=profile,
+                preference_key=preference.key,
+                weather=weather,
+                now=now,
+                schedule_verified_at=schedule_verified_at,
+                approved_override_snapshot=approved_override_snapshot,
+                journey_departure=journey_departure,
+                primary_emissions_kg=total_emissions_kg,
+            )
         )
-    )
 
     final_stop = ordered[-1]
     result: Dict[str, Any] = {
