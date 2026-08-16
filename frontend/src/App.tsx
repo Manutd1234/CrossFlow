@@ -1,4 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { identityKey, isDriverView } from './utils/access';
 import { Header } from './components/app-shell/Header';
 import type { AppTab } from './components/app-shell/Navigation';
 
@@ -246,11 +247,35 @@ export function App() {
   // resolve a role from it.
   const signInAvailable = supabaseConfigured()
     && (authStatus === null || authStatus.enabled);
-  const driverAccess = isGuest || identity?.role.toLowerCase() === 'driver';
+  const driverAccess = isDriverView(identity, isGuest);
 
   const visibleActiveTab: AppTab = driverAccess && activeTab === 'analytics'
     ? 'map'
     : activeTab;
+
+  // Changing who is signed in — including signing out — must not leave the
+  // previous account's route on screen. Undefined marks the first run, so
+  // restoring a stored session on load is not mistaken for a switch.
+  const identityKeyRef = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    const key = identityKey(identity);
+    if (identityKeyRef.current === undefined) {
+      identityKeyRef.current = key;
+      return;
+    }
+    if (identityKeyRef.current === key) return;
+    identityKeyRef.current = key;
+    setRouteResult(null);
+    setActiveTab('map');
+  }, [identity]);
+
+  // A resolved account supersedes the remembered guest flag outright, so clear
+  // it rather than leaving two disagreeing sources of truth behind.
+  useEffect(() => {
+    if (!identity) return;
+    window.sessionStorage?.removeItem('crossflow.guest');
+    setIsGuest(false);
+  }, [identity]);
 
   const continueAsGuest = useCallback(() => {
     window.sessionStorage?.setItem('crossflow.guest', '1');

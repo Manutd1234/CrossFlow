@@ -1023,9 +1023,10 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
         </button>
       </form>
 
-      {/* Signed-in operators only: the server refuses history without a token,
-          and the driver view is deliberately a single assigned journey. */}
-      {accessToken && !driverAccess ? (
+      {/* Lives under Saved rather than beside the search controls, which it
+          crowded. Signed-in operators only: the server refuses history without
+          a token, and the driver view is deliberately one assigned journey. */}
+      {accessToken && !driverAccess && isNamedMode ? (
         <RouteRunHistoryPanel
           accessToken={accessToken}
           onSelectRun={(code) => void loadRouteByCode(code)}
