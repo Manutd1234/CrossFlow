@@ -270,12 +270,31 @@ export function App() {
   }, [identity]);
 
   // A resolved account supersedes the remembered guest flag outright, so clear
-  // it rather than leaving two disagreeing sources of truth behind.
+  // it rather than leaving two disagreeing sources of truth behind. Signing in
+  // also dismisses the panel: leaving it open parked a "Signed in" dialog on
+  // top of the workspace, which reads as though sign-in had not finished.
   useEffect(() => {
     if (!identity) return;
     window.sessionStorage?.removeItem('crossflow.guest');
     setIsGuest(false);
+    setIsSignInOpen(false);
   }, [identity]);
+
+  // Entering or leaving the driver view must start from a clean pane. The
+  // driver's only route is the one they load by code, so a journey left over
+  // from planning would otherwise appear under a different code than the one
+  // in the lookup box.
+  const driverAccessRef = useRef<boolean | undefined>(undefined);
+  useEffect(() => {
+    if (driverAccessRef.current === undefined) {
+      driverAccessRef.current = driverAccess;
+      return;
+    }
+    if (driverAccessRef.current === driverAccess) return;
+    driverAccessRef.current = driverAccess;
+    setRouteResult(null);
+    setActiveTab('map');
+  }, [driverAccess]);
 
   const continueAsGuest = useCallback(() => {
     window.sessionStorage?.setItem('crossflow.guest', '1');
