@@ -26,6 +26,7 @@ import {
   relativeDeparture,
 } from '../../utils/format';
 import { RoutePreviewMap } from './RoutePreviewMap';
+import { RouteRunHistoryPanel } from './RouteRunHistoryPanel';
 import { LocationSearch } from './LocationSearch';
 import { WorldMapPickerModal } from './WorldMapPickerModal';
 import { WorkspaceSubtabs } from '../shared/WorkspaceSubtabs';
@@ -34,10 +35,6 @@ import {
   vehicleProfile,
   type VehicleIconKey,
 } from '../../data/vehicleCatalog';
-import {
-  ROUTE_PREFERENCE_OPTIONS,
-  isRoutePreferenceAvailable,
-} from '../../data/routePreferences';
 
 
 interface RouteOptimizerProps {
@@ -52,8 +49,6 @@ interface RouteOptimizerProps {
   setResultSource: (s: DataSource) => void;
   vehicleType: VehicleType;
   setVehicleType: (v: VehicleType) => void;
-  routePreference: RoutePreference;
-  setRoutePreference: (preference: RoutePreference) => void;
   weather: number;
   setWeather: (w: number) => void;
   hour: number;
@@ -171,18 +166,10 @@ function formatManeuverDistance(distanceM: number): string {
   return `${(distanceM / 1000).toFixed(1)} km`;
 }
 
-const ROUTE_PREFERENCE_ICONS: Record<RoutePreference, LucideIcon> = {
-  BALANCED: Sparkles,
-  FASTEST: Zap,
-  SHORTEST: Route,
-  EASY: ShieldCheck,
-  LOCAL: MapPin,
-};
-
 export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
   locations, originId, setOriginId, destinationId, setDestinationId,
   result, setResult, resultSource, setResultSource,
-  vehicleType, setVehicleType, routePreference, setRoutePreference,
+  vehicleType, setVehicleType,
   weather, setWeather, hour, setHour,
   driverAccess = false, accessToken = null,
 }) => {
@@ -205,10 +192,9 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
   const vehicleTriggerRef = useRef<HTMLButtonElement>(null);
   const vehicleMenuRef = useRef<HTMLDivElement>(null);
   const vehicleOptionRefs = useRef<Array<HTMLButtonElement | null>>([]);
-  const selectedRoutePreference = ROUTE_PREFERENCE_OPTIONS.find(
-    (option) => option.id === routePreference,
-  ) ?? ROUTE_PREFERENCE_OPTIONS[0];
-  const localRouteAvailable = isRoutePreferenceAvailable('LOCAL', vehicleType);
+  // The preference selector was removed from the UI; every plan now uses the
+  // balanced objective, which the request payloads below still send explicitly.
+  const routePreference: RoutePreference = 'BALANCED';
   const selectedVehicleProfile = vehicleProfile(vehicleType);
   const SelectedVehicleIcon = VEHICLE_ICONS[selectedVehicleProfile.icon];
 
@@ -423,8 +409,12 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
     }
   };
 
-  const handleAssignedRouteLookup = async () => {
-    const normalizedCode = routeCode.trim().toUpperCase();
+  // Shared by the driver code box and the history list, so a run opened from
+  // either path lands in the result pane the same way.
+  const handleAssignedRouteLookup = () => loadRouteByCode(routeCode);
+
+  const loadRouteByCode = async (code: string) => {
+    const normalizedCode = code.trim().toUpperCase();
     if (!/^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{7}$/.test(normalizedCode)) return;
     clearRouteBenchmark();
     setActiveResultTab('summary');
@@ -871,64 +861,6 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
         </fieldset>
 
 
-        <fieldset className="route-preference-fieldset">
-          <legend className="route-planner-fieldset-legend">Route preference</legend>
-          <div className="route-preference-grid">
-            {ROUTE_PREFERENCE_OPTIONS.map((preference) => {
-              const PreferenceIcon = ROUTE_PREFERENCE_ICONS[preference.id];
-              const isSelected = routePreference === preference.id;
-              const isAvailable = isRoutePreferenceAvailable(
-                preference.id,
-                vehicleType,
-              );
-              const unavailableDescriptionId = preference.id === 'LOCAL' && !isAvailable
-                ? 'route-preference-local-unavailable'
-                : undefined;
-              return (
-                <button
-                  key={preference.id}
-                  type="button"
-                  className="ui-button-choice ui-sand-interactive route-preference-option"
-                  aria-pressed={isSelected}
-                  aria-label={`${preference.name}. ${preference.description}`}
-                  aria-describedby={unavailableDescriptionId}
-                  disabled={!isAvailable}
-                  onClick={() => {
-                    if (isSelected || !isAvailable) return;
-                    setRoutePreference(preference.id);
-                    // The solved route answers the previous objective, so it
-                    // must not stay on screen labelled as the new one.
-                    invalidateResult();
-                  }}
-                >
-                  <span className="route-choice-option-heading">
-                    <PreferenceIcon size={ICON_SIZE.medium} aria-hidden="true" />
-                    <strong className="route-choice-option-label">{preference.name}</strong>
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-          <p
-            id="route-preference-selected-description"
-            className="route-preference-selected-description"
-            role="status"
-            aria-live="polite"
-          >
-            {selectedRoutePreference.description}
-          </p>
-          {!localRouteAvailable ? (
-            <p
-              id="route-preference-local-unavailable"
-              className="route-preference-unavailable-note"
-            >
-              <TriangleAlert size={ICON_SIZE.medium} aria-hidden="true" />
-              Local shortcuts unavailable: {selectedVehicleProfile.label} is too large for unverified narrow-road clearance.
-            </p>
-          ) : null}
-        </fieldset>
-
-
         <fieldset className="route-planner-fieldset">
           <legend className="route-planner-fieldset-legend">
             Weather & Time
@@ -1090,6 +1022,16 @@ export const RouteOptimizer: React.FC<RouteOptimizerProps> = ({
           {loading ? (driverAccess ? 'Loading Route…' : 'Composing Journey…') : (driverAccess ? 'Load Route' : 'Plan Journey')}
         </button>
       </form>
+
+      {/* Signed-in operators only: the server refuses history without a token,
+          and the driver view is deliberately a single assigned journey. */}
+      {accessToken && !driverAccess ? (
+        <RouteRunHistoryPanel
+          accessToken={accessToken}
+          onSelectRun={(code) => void loadRouteByCode(code)}
+          activeRouteCode={result?.route_code ?? null}
+        />
+      ) : null}
 
       <section
         className="glass-panel route-result-panel"

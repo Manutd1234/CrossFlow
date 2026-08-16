@@ -981,3 +981,29 @@ export interface AuthSession {
   expires_at: number | null;
   role_source: string;
 }
+
+/**
+ * One row of route-solver history.
+ *
+ * Summaries only: the server deliberately omits the route envelope so listing
+ * a page never transfers megabytes of geometry. Load the full journey through
+ * `requestPersistedRoute` with `route_code`.
+ */
+export interface RouteRunSummary {
+  route_id: string;
+  route_code: string;
+  route_kind: string;
+  origin_name: string | null;
+  destination_name: string | null;
+  vehicle_type: string | null;
+  /** Null for runs produced by a guest, which carry no attribution. */
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RouteRunHistory {
+  runs: RouteRunSummary[];
+  /** 'all_accounts' only ever comes back for an administrator. */
+  scope: 'all_accounts' | 'own_account';
+}

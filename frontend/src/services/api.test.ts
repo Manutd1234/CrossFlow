@@ -7,6 +7,7 @@ import {
   offlineFerries,
 } from '../data/mockData';
 import {
+  fetchRouteRunHistory,
   fetchFerries,
   fetchHistoricalCongestion,
   fetchLiveTraffic,
@@ -1170,5 +1171,63 @@ describe('traffic continuity fallback', () => {
     expect(Object.values(
       response.data.coverage?.emissions_pressure_level_counts ?? {},
     ).reduce((total, count) => total + count, 0)).toBe(30);
+  });
+});
+
+describe('route-solver run history', () => {
+  it('sends the session token and normalizes the enveloped payload', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({
+        data: {
+          runs: [{
+            route_id: 'a'.repeat(64),
+            route_code: 'VQT4QX8',
+            route_kind: 'optimize-route',
+            origin_name: 'Batamindo',
+            destination_name: 'Batam Centre',
+            vehicle_type: 'CARGO_TRUCK',
+            created_by: 'user-1',
+            created_at: '2026-08-16T04:00:00Z',
+            updated_at: '2026-08-16T04:00:00Z',
+          }],
+          scope: 'all_accounts',
+        },
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const history = await fetchRouteRunHistory('token-abc', { limit: 5, mine: true });
+
+    const url = String(fetchMock.mock.calls[0]?.[0]);
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(url).toContain('/api/routes');
+    expect(url).toContain('limit=5');
+    expect(url).toContain('mine=true');
+    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer token-abc');
+    expect(history.scope).toBe('all_accounts');
+    expect(history.runs).toHaveLength(1);
+    expect(history.runs[0].route_code).toBe('VQT4QX8');
+  });
+
+  it('surfaces the server explanation when history is unconfigured', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ detail: 'Shared route history is not configured;' }),
+      { status: 503, headers: { 'Content-Type': 'application/json' } },
+    )));
+
+    await expect(fetchRouteRunHistory('token-abc'))
+      .rejects.toThrow('Shared route history is not configured;');
+  });
+
+  it('never reports a non-admin scope as covering every account', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ data: { runs: [], scope: 'own_account' } }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    )));
+
+    const history = await fetchRouteRunHistory('token-abc');
+    expect(history.scope).toBe('own_account');
+    expect(history.runs).toEqual([]);
   });
 });

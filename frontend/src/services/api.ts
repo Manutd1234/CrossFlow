@@ -4,6 +4,7 @@ import {
   FetchedFerryRefresh, FetchedFerrySchedule, FreeLocation, GeocodedLocation, HistoricalProfile,
   LiveTrafficData, ModelMetrics, NavigationData, OperationsSummary, PortStatus, RouteLocation,
   RouteBenchmarkResult, RouteEndpointSnapshot, RouteOptimizationResult, RoutePreference,
+  RouteRunHistory,
   RouteScheduleOptions,
   RoutingCostBreakdown, VehicleType,
 } from '../types';
@@ -750,15 +751,11 @@ export async function requestPersistedRoute(
     throw new ApiRequestError('Enter the seven-character route code supplied by dispatch.', 400);
   }
 
-  // Drivers reach this panel as guests, so there is no session token to send.
-  // The deployment-scoped read token is the mechanism the API documents for
-  // exactly that client. Vite embeds it in the public bundle, so it is only a
-  // per-deployment gate, never a per-account one: leave it unset and drivers
-  // must sign in instead.
+  // Drivers are guests by design: the dispatch code is the capability, so no
+  // credential is sent or required. The session token is still forwarded when
+  // one happens to exist, purely so server logs can attribute the read.
   const headers: Record<string, string> = {};
   if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
-  const routeReadToken = import.meta.env.VITE_ROUTE_READ_TOKEN?.trim();
-  if (routeReadToken) headers['X-Crossflow-Route-Token'] = routeReadToken;
 
   let response: Response;
   try {
@@ -785,6 +782,51 @@ export async function requestPersistedRoute(
   if (!payload) throw new ApiRequestError('The assigned route response is incomplete.', 503);
   return wrap(payload as RouteOptimizationResult & Envelope, payload);
 }
+/**
+ * List recent route-solver runs for the signed-in account.
+ *
+ * Requires a session: the server returns every account's runs to an
+ * administrator and only the caller's own to anyone else, so this must never
+ * be called without a token in the hope of a public listing.
+ */
+export async function fetchRouteRunHistory(
+  accessToken: string,
+  options: { limit?: number; mine?: boolean } = {},
+): Promise<RouteRunHistory> {
+  const params = new URLSearchParams();
+  if (options.limit) params.set('limit', String(options.limit));
+  if (options.mine) params.set('mine', 'true');
+  const query = params.toString();
+
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}/api/routes${query ? `?${query}` : ''}`, {
+      signal: AbortSignal.timeout(CORRIDOR_TIMEOUT_MS),
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+  } catch {
+    throw new ApiRequestError('Route history could not be reached. Try again.', 503);
+  }
+  if (!response.ok) {
+    let detail = response.status === 401 || response.status === 403
+      ? 'Sign in again to view route history.'
+      : 'Route history is unavailable right now.';
+    try {
+      const body = await response.json() as { detail?: unknown };
+      if (typeof body.detail === 'string' && body.detail.trim()) detail = body.detail;
+    } catch {
+      // Keep the status-specific message for non-JSON responses.
+    }
+    throw new ApiRequestError(detail, response.status);
+  }
+  const body = await response.json() as { data?: RouteRunHistory } & Partial<RouteRunHistory>;
+  const payload = body.data ?? body;
+  return {
+    runs: Array.isArray(payload.runs) ? payload.runs : [],
+    scope: payload.scope === 'all_accounts' ? 'all_accounts' : 'own_account',
+  };
+}
+
 const FERRY_BOARDING_CUTOFF_MINS = 15;
 
 function browserRoutingContext(

@@ -132,8 +132,6 @@ describe('application shell DOM', () => {
         setResultSource={vi.fn()}
         vehicleType="COMMUTER"
         setVehicleType={vi.fn()}
-        routePreference="BALANCED"
-        setRoutePreference={vi.fn()}
         weather={0}
         setWeather={vi.fn()}
         hour={14}
@@ -150,10 +148,9 @@ describe('application shell DOM', () => {
       container.querySelector('.workspace-subtabs__rail')?.classList ?? [],
     )).toEqual(['workspace-subtabs__rail']);
     expect(planner?.querySelectorAll('form')).toHaveLength(0);
-    // Endpoints, vehicle, and weather & time. Route preference is intentionally
-    // fixed rather than exposed in the admin side panel.
-    // Endpoints, vehicle, route preference, weather & time.
-    expect(planner?.querySelectorAll('fieldset')).toHaveLength(4);
+    // Endpoints, vehicle, and weather & time. The objective is fixed at
+    // balanced rather than exposed as a fourth control.
+    expect(planner?.querySelectorAll('fieldset')).toHaveLength(3);
     const submitButton = planner?.querySelector('button[type="submit"]');
     expect(submitButton?.textContent).toContain('Plan Journey');
     expect(submitButton?.classList.contains('ui-button-primary')).toBe(true);
@@ -186,8 +183,6 @@ describe('application shell DOM', () => {
         setResultSource={vi.fn()}
         vehicleType="COMMUTER"
         setVehicleType={vi.fn()}
-        routePreference="BALANCED"
-        setRoutePreference={vi.fn()}
         weather={0}
         setWeather={vi.fn()}
         hour={14}

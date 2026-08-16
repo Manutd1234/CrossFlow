@@ -26,8 +26,6 @@ function VehicleHarness() {
       setResultSource={vi.fn()}
       vehicleType={vehicleType}
       setVehicleType={setVehicleType}
-      routePreference="BALANCED"
-      setRoutePreference={vi.fn()}
       weather={0}
       setWeather={vi.fn()}
       hour={14}
@@ -83,17 +81,12 @@ describe('vehicle profile selection', () => {
       .toContain('bus lanes are not modelled');
   });
 
-  it('offers route preferences and adds intermediate location fields', () => {
+  it('adds intermediate location fields without offering a route preference', () => {
     const container = renderIntoDom(<VehicleHarness />);
-    // All five audited objectives stay selectable: the solver honours each of
-    // them, so hiding the control strands a capability the backend still has.
-    const preferences = Array.from(
-      container.querySelectorAll('.route-preference-option'),
-    ).map((option) => option.textContent);
-    expect(preferences).toHaveLength(5);
-    expect(preferences.join(' ')).toContain('Balanced');
-    expect(preferences.join(' ')).toContain('Local');
-    expect(container.textContent).toContain('Route preference');
+    // The objective selector was removed from the planner; every plan now uses
+    // the balanced objective, which RouteOptimizer sends on the caller's behalf.
+    expect(container.querySelectorAll('.route-preference-option')).toHaveLength(0);
+    expect(container.textContent).not.toContain('Route preference');
 
     const swap = container.querySelector<HTMLButtonElement>('.route-swap-button');
     const add = container.querySelector<HTMLButtonElement>('.route-add-stop-button');

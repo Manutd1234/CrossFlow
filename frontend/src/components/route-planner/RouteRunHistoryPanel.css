@@ -1,0 +1,126 @@
+/* Route-solver run history. Tokens come from index.css so this panel tracks
+   the shared theme rather than restating any colour of its own. */
+
+.route-run-history {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+}
+
+.route-run-history__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.route-run-history__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-family: var(--font-heading);
+  font-size: 1rem;
+  color: var(--text-primary);
+}
+
+.route-run-history__title svg {
+  color: var(--accent-cyan);
+}
+
+.route-run-history__refresh {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.route-run-history__refresh:hover:not(:disabled) {
+  background: var(--sand-interactive-hover);
+  border-color: var(--border-strong);
+}
+
+.route-run-history__refresh:disabled {
+  opacity: 0.55;
+  cursor: progress;
+}
+
+.route-run-history__scope,
+.route-run-history__empty,
+.route-run-history__error {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.route-run-history__error {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--accent-rose);
+}
+
+.route-run-history__list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  /* Bound to roughly six rows so a long history scrolls inside the panel
+     instead of pushing the planner controls off-screen. */
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.route-run-history__item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  padding: 9px 11px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  text-align: left;
+  cursor: pointer;
+}
+
+.route-run-history__item:hover {
+  background: var(--sand-interactive-hover);
+  border-color: var(--border-strong);
+}
+
+.route-run-history__item[aria-current='true'] {
+  background: var(--sand-interactive-selected);
+  border-color: var(--border-accent);
+}
+
+.route-run-history__route {
+  font-weight: 600;
+  font-size: 0.86rem;
+  color: var(--text-primary);
+}
+
+.route-run-history__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  text-transform: capitalize;
+}
+
+.route-run-history__code {
+  font-family: var(--font-body);
+  letter-spacing: 0.08em;
+  color: var(--accent-cyan);
+  text-transform: none;
+}

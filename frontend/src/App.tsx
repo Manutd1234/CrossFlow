@@ -5,7 +5,7 @@ import type { AppTab } from './components/app-shell/Navigation';
 import {
   AuthSession, AuthStatus, Corridor, CorridorRoute, DataSource, FerrySchedule, Fetched, LiveTrafficData,
   FerryRefreshReport, FerryTimetableMetadata, OperationsSummary, PortStatus, Provenance,
-  RouteLocation, RouteOptimizationResult, RoutePreference, StoredSession, VehicleType,
+  RouteLocation, RouteOptimizationResult, StoredSession, VehicleType,
 } from './types';
 import {
   fetchAuthStatus, fetchSession, readStoredSession, supabaseConfigured, validSession,
@@ -96,7 +96,6 @@ export function App() {
   const [routeResult, setRouteResult] = useState<RouteOptimizationResult | null>(null);
   const [routeSource, setRouteSource] = useState<DataSource>('simulated');
   const [vehicleType, setVehicleType] = useState<VehicleType>('CARGO_TRUCK');
-  const [routePreference, setRoutePreference] = useState<RoutePreference>('BALANCED');
   const [weather, setWeather] = useState<number>(0);
   const [departureHour, setDepartureHour] = useState<number>(() => new Date().getHours());
   const ferryRefreshInFlightRef = useRef(false);
@@ -372,8 +371,6 @@ export function App() {
                   setResultSource={setRouteSource}
                   vehicleType={vehicleType}
                   setVehicleType={setVehicleType}
-                  routePreference={routePreference}
-                  setRoutePreference={setRoutePreference}
                   weather={weather}
                   setWeather={setWeather}
                   hour={departureHour}

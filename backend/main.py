@@ -28,7 +28,7 @@ from models.congestion_model import forecaster
 from services import clock, ferry_freshness_store, ferry_refresh, ferry_schedule, router
 from services import geocoder, google_routes_benchmark, live_traffic, historical_store
 from services import routing_intelligence_store, shortcut_ingestion
-from services import route_store
+from services import route_run_store, route_store
 from services.route_identity import route_id as make_route_id, short_route_code
 from services.service_contracts import ApprovedGraphOverrideSnapshot
 from services.traffic_observations import (
@@ -941,11 +941,27 @@ _ROUTE_NO_STORE_HEADERS = {
 }
 
 
+def _optional_user_id(authorization: Optional[str]) -> Optional[str]:
+    """Resolve the caller's account id, or None for a guest.
+
+    Route planning is public, so an absent, expired or malformed credential
+    must never fail the request; it only means the run is recorded without
+    attribution.
+    """
+    if not authorization or not identity.auth_enabled():
+        return None
+    try:
+        return identity.require_user(authorization).id
+    except Exception:  # noqa: BLE001 - attribution is never worth a 4xx here
+        return None
+
+
 def _persist_route_response(
     request: BaseModel,
     route_kind: str,
     result: Dict[str, Any],
     now: datetime,
+    created_by: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Attach a stable route identity and best-effort persist the response.
 
@@ -1018,6 +1034,24 @@ def _persist_route_response(
         )
     except Exception as error:  # pragma: no cover - defensive storage boundary
         print(f"[route_store] persistence skipped ({type(error).__name__})")
+    # Mirror the run into the shared table when one is configured. SQLite alone
+    # is per-instance on serverless, so without this a code issued by one
+    # worker cannot be retrieved from another. Failures here are logged inside
+    # the store and never affect the response.
+    try:
+        route_run_store.save(
+            identity,
+            route_code,
+            route_kind,
+            identity_payload,
+            payload,
+            origin_name=request_payload.get("origin_name"),
+            destination_name=request_payload.get("destination_name"),
+            vehicle_type=request_payload.get("vehicle_type"),
+            created_by=created_by,
+        )
+    except Exception as error:  # pragma: no cover - defensive storage boundary
+        print(f"[route_runs] persistence skipped ({type(error).__name__})")
     return payload
 
 
@@ -1180,7 +1214,10 @@ def api_route_benchmark(req: RouteBenchmarkRequest, response: Response):
     ),
 )
 @app.post("/optimize-route", response_model=RouteResponse, include_in_schema=False)
-def api_optimize_route(req: RouteRequest):
+def api_optimize_route(
+    req: RouteRequest,
+    authorization: Optional[str] = Header(default=None),
+):
     """Calculate a named-corridor route and persist its response.
 
     Send exactly one of ``departure_at`` or ``arrive_by`` for full timestamp
@@ -1211,7 +1248,10 @@ def api_optimize_route(req: RouteRequest):
         raise HTTPException(status_code=400, detail=str(err)) from err
     result["schedule_provenance"] = schedule_provenance
     _routing_intelligence_audit(result, approved_snapshot, snapshot_source)
-    return _persist_route_response(req, "optimize-route", result, now)
+    return _persist_route_response(
+        req, "optimize-route", result, now,
+        created_by=_optional_user_id(authorization),
+    )
 
 
 @app.post(
@@ -1223,7 +1263,10 @@ def api_optimize_route(req: RouteRequest):
     ),
 )
 @app.post("/optimize-free-route", response_model=RouteResponse, include_in_schema=False)
-def api_optimize_free_route(req: FreeRouteRequest):
+def api_optimize_free_route(
+    req: FreeRouteRequest,
+    authorization: Optional[str] = Header(default=None),
+):
     """Route local or ferry-linked journeys within Singapore and Batam.
 
     Batam-only requests use the committed OSM A* graph. Singapore-involved
@@ -1259,7 +1302,10 @@ def api_optimize_free_route(req: FreeRouteRequest):
         raise HTTPException(status_code=400, detail=str(err)) from err
     result["schedule_provenance"] = schedule_provenance
     _routing_intelligence_audit(result, approved_snapshot, snapshot_source)
-    return _persist_route_response(req, "optimize-free-route", result, now)
+    return _persist_route_response(
+        req, "optimize-free-route", result, now,
+        created_by=_optional_user_id(authorization),
+    )
 
 
 @app.post(
@@ -1275,7 +1321,10 @@ def api_optimize_free_route(req: FreeRouteRequest):
     response_model=RouteResponse,
     include_in_schema=False,
 )
-def api_optimize_multi_stop_route(req: MultiStopRouteRequest):
+def api_optimize_multi_stop_route(
+    req: MultiStopRouteRequest,
+    authorization: Optional[str] = Header(default=None),
+):
     """Schedule one journey through three or more ordered stops.
 
     Each consecutive pair is solved by the same engines as a two-point route —
@@ -1308,7 +1357,10 @@ def api_optimize_multi_stop_route(req: MultiStopRouteRequest):
         raise HTTPException(status_code=400, detail=str(err)) from err
     result["schedule_provenance"] = schedule_provenance
     _routing_intelligence_audit(result, approved_snapshot, snapshot_source)
-    return _persist_route_response(req, "optimize-multi-stop-route", result, now)
+    return _persist_route_response(
+        req, "optimize-multi-stop-route", result, now,
+        created_by=_optional_user_id(authorization),
+    )
 
 
 @app.get(
@@ -1328,47 +1380,92 @@ def api_get_route(
         pattern=r"^(?:[0-9a-f]{64}|[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{7})$",
     ),
     response: Response = None,
-    authorization: Optional[str] = Header(default=None),
-    x_crossflow_route_token: Optional[str] = Header(default=None),
-    x_crossflow_admin_token: Optional[str] = Header(default=None),
 ):
-    """Retrieve a persisted route for an authorized driver or operator.
+    """Retrieve a persisted route by the code dispatch issued for it.
 
-    Any signed-in CrossFlow account may load a route it has the code for, which
-    is the path the driver UI uses. The deployment-scoped route-read token
-    remains for machine clients that hold no user session, and the shared admin
-    token remains as a compatibility path. A route ID is content-addressed, not
-    access control by itself. The path accepts either the full 64-character
-    ``route_id`` or its seven-character ``route_code`` alias and returns the
-    persisted route envelope with ``estimated_arrival``, ``scheduling``, and
-    route identifiers.
+    Drivers are deliberately unauthenticated: dispatch hands out a code and
+    anyone holding it can load that journey, so this endpoint is public and the
+    code itself is the capability. It grants read access to exactly one route
+    and nothing else -- no listing, no account data, no other journeys. Route
+    history, which does span accounts, stays behind sign-in on ``GET
+    /api/routes``.
+
+    Codes are seven characters from a 32-symbol alphabet, so guessing one is a
+    1-in-34-billion draw per attempt; put a rate limit in front of this route
+    if that margin ever needs to be wider.
+
+    The path accepts either the full 64-character ``route_id`` or its
+    seven-character ``route_code`` alias and returns the persisted route
+    envelope with ``estimated_arrival``, ``scheduling``, and route identifiers.
     """
-    expected_reader = os.environ.get("CROSSFLOW_ROUTE_READ_TOKEN", "")
-    reader_ok = bool(
-        expected_reader
-        and x_crossflow_route_token
-        and secrets.compare_digest(x_crossflow_route_token, expected_reader)
-    )
-    if not reader_ok and identity.auth_enabled() and authorization:
-        # Verified against Supabase with the caller's own token, so a forged
-        # bearer cannot mint access. Any role suffices: dispatch hands drivers
-        # the code precisely so they can load the route assigned to them.
-        identity.require_user(authorization)
-    elif not reader_ok:
-        _require_admin(
-            x_crossflow_admin_token,
-            detail=(
-                "A valid route-read token or administrator token is required "
-                "to retrieve routes."
-            ),
-        )
     if response is not None:
         for header, value in _ROUTE_NO_STORE_HEADERS.items():
             response.headers[header] = value
     stored = _ROUTE_STORE.get(route_id)
     if stored is None:
+        # The local SQLite file is per-instance on serverless, so a code issued
+        # by another worker is only findable in the shared table.
+        stored = route_run_store.get(route_id)
+    if stored is None:
         raise HTTPException(status_code=404, detail="Route not found.")
     return stored
+
+
+@app.get(
+    "/api/routes",
+    summary="List recent route-solver runs",
+    response_description=(
+        "Recent run summaries, newest first. Summaries only: fetch a route "
+        "code from /api/routes/{route_id} for the full envelope."
+    ),
+)
+@app.get("/routes", include_in_schema=False)
+def api_route_history(
+    response: Response = None,
+    limit: int = Query(default=20, ge=1, le=route_run_store.MAX_HISTORY_LIMIT),
+    mine: bool = Query(
+        default=False,
+        description="Restrict to runs produced by the calling account.",
+    ),
+    authorization: Optional[str] = Header(default=None),
+):
+    """Return recent route-solver runs from the shared history table.
+
+    History is only meaningful across instances, so it is served solely from
+    the shared table; the per-instance SQLite file is deliberately not merged
+    in, which would make the same list differ per worker. An administrator
+    sees every account's runs, any signed-in account sees its own.
+    """
+    if not identity.auth_enabled():
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Route history requires user authentication; set "
+                "CROSSFLOW_AUTH_MODE=supabase."
+            ),
+        )
+    user = identity.require_user(authorization)
+    if not route_run_store.configured():
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Shared route history is not configured; set SUPABASE_URL and "
+                "SUPABASE_SECRET_KEY and create the crossflow_route_runs table."
+            ),
+        )
+    # Only an administrator may see other accounts' runs.
+    created_by = None if user.is_admin and not mine else user.id
+    runs = route_run_store.recent(limit, created_by=created_by)
+    if response is not None:
+        for header, value in _ROUTE_NO_STORE_HEADERS.items():
+            response.headers[header] = value
+    return envelope(
+        {
+            "runs": runs,
+            "scope": "all_accounts" if created_by is None else "own_account",
+        },
+        clock.now(),
+    )
 
 
 def _route_schedule_authority() -> Tuple[str, Dict[str, Any]]:
